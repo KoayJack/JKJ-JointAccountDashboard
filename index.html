@@ -179,6 +179,11 @@
     border-radius:6px;padding:6px 14px;cursor:pointer;
   }
   .prompt-ok-btn:hover{background:var(--brass-dark);border-color:var(--brass-dark);}
+
+  .sync-badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line);margin-left:6px;}
+  .sync-badge.ok{color:var(--sage);border-color:var(--sage);}
+  .sync-badge.err{color:var(--rust);border-color:var(--rust);}
+  .sync-badge.saving{color:var(--brass-dark);border-color:var(--brass);}
 </style>
 </head>
 <body>
@@ -187,7 +192,7 @@
   <header>
     <p class="eyebrow">Joint Account</p>
     <h1>Joint Account · Dashboard</h1>
-    <p class="shared-note">This data is shared: anyone who opens this link sees the same records, and edits sync to everyone.</p>
+    <p class="shared-note">This data is shared via Google Sheets (through SheetDB): anyone with this file sees the same records, and edits sync to everyone. <span id="syncBadge" class="sync-badge">—</span></p>
   </header>
 
   <div class="identity-bar" id="identityBar">
@@ -301,7 +306,14 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-const STORAGE_KEY = 'joint-account-shared-ledger';
+// ---- SheetDB connection ------------------------------------------------
+// Your Google Sheet must have a header row with exactly two columns: id, value.
+// All app data is stored as one JSON blob in the row where id = "ledger".
+// This mirrors how the old window.storage version worked, just backed by
+// your own Google Sheet instead of Claude's artifact storage.
+const SHEETDB_API = 'https://sheetdb.io/api/v1/dl4u8lwemdjk2';
+const RECORD_ID = 'ledger';
+
 let data = { people: ['Me','Family member'], topups: [], expenses: [], history: [], pins: {} };
 let pieChart=null, barChart=null, lineChart=null;
 let currentUser = '';
@@ -315,18 +327,28 @@ function fmtWhen(iso){
   return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
 
+function setSyncBadge(state){
+  const el = document.getElementById('syncBadge');
+  if(!el) return;
+  el.classList.remove('ok','err','saving');
+  if(state === 'ok'){ el.textContent = 'Synced'; el.classList.add('ok'); }
+  else if(state === 'saving'){ el.textContent = 'Saving…'; el.classList.add('saving'); }
+  else if(state === 'err'){ el.textContent = 'Sync failed — check connection'; el.classList.add('err'); }
+  else { el.textContent = '—'; }
+}
+
 // Hashes a PIN with SHA-256 so the raw PIN is never stored, even in the shared data.
 // Note: this runs entirely in the browser with no server, so it deters casual
 // impersonation but isn't bank-grade security — someone with real technical
-// access to the shared storage could still bypass it.
+// access to the shared spreadsheet could still bypass it.
 async function sha256Hex(str){
   const enc = new TextEncoder().encode(str);
   const buf = await crypto.subtle.digest('SHA-256', enc);
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
-// Generic in-page dialog. The artifact preview runs in a sandboxed frame that
-// blocks window.prompt/confirm/alert, so this replaces all of those.
+// Generic in-page dialog, used instead of window.prompt/confirm/alert so this
+// still works the same whether the page is opened directly or embedded somewhere.
 function showModal({title, message='', showInput=false, isPassword=true, showCancel=true, okLabel='OK', cancelLabel='Cancel'}){
   return new Promise((resolve) => {
     const overlay = document.getElementById('promptOverlay');
@@ -415,11 +437,34 @@ async function requireUser(){
   return true;
 }
 
+// ---- Load from / save to the Google Sheet via SheetDB -------------------
 async function load(){
+  setSyncBadge('saving');
   try{
-    const res = await window.storage.get(STORAGE_KEY, true);
-    if(res && res.value){ data = JSON.parse(res.value); }
-  }catch(e){ /* no existing shared data yet, keep defaults */ }
+    const res = await fetch(`${SHEETDB_API}/search?id=${encodeURIComponent(RECORD_ID)}`);
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const rows = await res.json();
+    if(Array.isArray(rows) && rows.length > 0 && rows[0].value){
+      data = JSON.parse(rows[0].value);
+      setSyncBadge('ok');
+    } else {
+      // First time ever — nothing in the sheet yet, so create the row.
+      await fetch(SHEETDB_API, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ data: { id: RECORD_ID, value: JSON.stringify(data) } })
+      });
+      setSyncBadge('ok');
+    }
+  }catch(e){
+    console.error('Load failed', e);
+    setSyncBadge('err');
+    await showModal({
+      title:'Could not load shared data',
+      message:'Could not reach the Google Sheet (SheetDB). Check your internet connection and that the sheet still has an "id" and "value" column, then reload the page.',
+      showInput:false, showCancel:false
+    });
+  }
   if(!Array.isArray(data.history)) data.history = []; // backward-compat with data saved before history tracking existed
   if(!data.pins || typeof data.pins !== 'object') data.pins = {}; // backward-compat with data saved before PINs existed
   document.getElementById('loading').style.display='none';
@@ -428,9 +473,19 @@ async function load(){
 }
 
 async function save(){
+  setSyncBadge('saving');
   try{
-    await window.storage.set(STORAGE_KEY, JSON.stringify(data), true);
-  }catch(e){ console.error('Save failed', e); }
+    const res = await fetch(`${SHEETDB_API}/id/${encodeURIComponent(RECORD_ID)}`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ data: { value: JSON.stringify(data) } })
+    });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    setSyncBadge('ok');
+  }catch(e){
+    console.error('Save failed', e);
+    setSyncBadge('err');
+  }
 }
 
 function render(){
