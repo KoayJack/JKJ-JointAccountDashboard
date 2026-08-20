@@ -248,7 +248,7 @@
       <summary>Top-ups <span class="n" id="topupCount">0</span></summary>
       <form class="entry-form" id="topupForm" style="margin-top:12px;">
         <div class="field"><label>Member</label><select id="topupPerson"></select></div>
-        <div class="field"><label>Amount</label><input type="number" id="topupAmount" step="0.01" min="0" placeholder="0.00" required></div>
+        <div class="field"><label>Amount</label><input type="number" id="topupAmount" step="0.01" placeholder="0.00 (negative allowed)" required></div>
         <div class="field"><label>Date</label><input type="date" id="topupDate"></div>
         <div class="field"><label>Note (optional)</label><input type="text" id="topupNote" placeholder="e.g. July top-up"></div>
         <button type="submit">Add entry</button>
@@ -263,7 +263,7 @@
       <summary>Expenses <span class="n" id="expenseCount">0</span></summary>
       <p class="hint" style="margin-top:12px;">Enter the expense total for each period (e.g. monthly) from your own budgeting app — no need to log every transaction.</p>
       <form class="entry-form" id="expenseForm">
-        <div class="field"><label>Amount</label><input type="number" id="expenseAmount" step="0.01" min="0" placeholder="0.00" required></div>
+        <div class="field"><label>Amount</label><input type="number" id="expenseAmount" step="0.01" placeholder="0.00 (negative allowed)" required></div>
         <div class="field"><label>Date</label><input type="date" id="expenseDate"></div>
         <div class="field"><label>Note (optional)</label><input type="text" id="expenseNote" placeholder="e.g. July expense total"></div>
         <button type="submit">Add entry</button>
@@ -765,7 +765,7 @@ document.getElementById('topupForm').addEventListener('submit', async (e) => {
   const amount = parseFloat(document.getElementById('topupAmount').value);
   const date = document.getElementById('topupDate').value;
   const note = document.getElementById('topupNote').value.trim();
-  if(!person || isNaN(amount) || amount <= 0) return;
+  if(!person || isNaN(amount) || amount === 0) return;
   const now = new Date().toISOString();
   data.topups.push({ id: uid(), person, amount, date, note, createdBy: currentUser, createdAt: now });
   logAction('add','topup',`Added top-up of ${fmt(amount)} for ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
@@ -779,7 +779,7 @@ document.getElementById('expenseForm').addEventListener('submit', async (e) => {
   const amount = parseFloat(document.getElementById('expenseAmount').value);
   const date = document.getElementById('expenseDate').value;
   const note = document.getElementById('expenseNote').value.trim();
-  if(isNaN(amount) || amount <= 0) return;
+  if(isNaN(amount) || amount === 0) return;
   const now = new Date().toISOString();
   data.expenses.push({ id: uid(), amount, date, note, createdBy: currentUser, createdAt: now });
   logAction('add','expense',`Added expense of ${fmt(amount)}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
