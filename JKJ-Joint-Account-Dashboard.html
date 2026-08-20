@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Joint Account · Dashboard</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap');
+
+  :root{
+    --paper:#F6F2E7;
+    --paper-2:#EFE8D6;
+    --ink:#242118;
+    --ink-soft:#5B5648;
+    --line:#D9D0B8;
+    --brass:#A97D3F;
+    --brass-dark:#7C5B2C;
+    --sage:#4F7A5B;
+    --sage-bg:#E4EDE3;
+    --rust:#B5502F;
+    --rust-bg:#F5E4DB;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    padding:32px 20px 64px;
+  }
+  .wrap{max-width:920px;margin:0 auto;}
+
+  header{
+    text-align:center;
+    padding-bottom:20px;
+    margin-bottom:24px;
+    border-bottom:1px solid var(--line);
+  }
+  header .eyebrow{
+    font-size:12px;letter-spacing:0.14em;color:var(--brass-dark);
+    text-transform:uppercase;margin:0 0 6px;
+  }
+  header h1{
+    font-family:'Source Serif 4',serif;font-weight:600;font-size:26px;margin:0;
+  }
+  .shared-note{
+    max-width:640px;margin:14px auto 0;font-size:12px;color:var(--ink-soft);
+    background:var(--paper-2);border:1px solid var(--line);border-radius:8px;padding:8px 14px;
+  }
+
+  .card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:10px;
+    padding:20px 22px;margin-bottom:20px;
+  }
+  .card h2{
+    font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;margin:0 0 14px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .card h2 .n{
+    font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--brass-dark);
+    border:1px solid var(--brass);border-radius:4px;padding:1px 6px;
+  }
+
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:8px;}
+  .stat{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:10px 12px;}
+  .stat .label{font-size:11px;color:var(--ink-soft);margin-bottom:4px;}
+  .stat .val{font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:500;}
+
+  .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px;}
+  .chart-box{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:14px;}
+  .chart-box .ctitle{font-size:12px;color:var(--ink-soft);margin-bottom:8px;text-align:center;}
+  @media (max-width:680px){.chart-grid{grid-template-columns:1fr;}}
+
+  .people-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .chip{
+    display:flex;align-items:center;gap:6px;background:var(--paper);border:1px solid var(--line);
+    border-radius:20px;padding:5px 10px 5px 12px;font-size:13px;
+  }
+  .chip input{border:none;background:transparent;font-size:13px;font-family:inherit;width:auto;min-width:2ch;color:var(--ink);padding:0;height:auto;}
+  .chip button{border:none;background:none;color:var(--ink-soft);cursor:pointer;font-size:13px;line-height:1;padding:0 2px;}
+  .add-person{font-size:13px;border:1px dashed var(--brass);color:var(--brass-dark);background:none;border-radius:20px;padding:5px 12px;cursor:pointer;}
+
+  form.entry-form{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:14px;}
+  form.entry-form .field{display:flex;flex-direction:column;gap:3px;}
+  form.entry-form label{font-size:11px;color:var(--ink-soft);}
+  form.entry-form select,form.entry-form input{
+    font-family:'Inter',sans-serif;font-size:13px;border:1px solid var(--line);
+    background:#fff;border-radius:6px;padding:6px 8px;height:34px;
+  }
+  form.entry-form input[type=number]{width:110px;font-family:'IBM Plex Mono',monospace;}
+  form.entry-form input[type=date]{width:140px;}
+  form.entry-form input[type=text]{width:160px;}
+  form.entry-form button{
+    height:34px;padding:0 14px;border-radius:6px;border:1px solid var(--brass);
+    background:var(--brass);color:#fff;font-size:13px;cursor:pointer;
+  }
+  form.entry-form button:hover{background:var(--brass-dark);border-color:var(--brass-dark);}
+
+  table.ledger{width:100%;border-collapse:collapse;font-size:13px;}
+  table.ledger th{
+    text-align:left;font-weight:500;color:var(--ink-soft);font-size:11px;text-transform:uppercase;
+    letter-spacing:0.04em;padding:4px 6px;border-bottom:1px solid var(--line);
+  }
+  table.ledger td{padding:7px 6px;border-bottom:1px dotted var(--line);font-family:'IBM Plex Mono',monospace;}
+  table.ledger td.name,table.ledger td.note{font-family:'Inter',sans-serif;}
+  table.ledger td.amt{text-align:right;}
+  table.ledger td.del{text-align:right;font-family:'Inter',sans-serif;}
+  table.ledger td.del button{border:none;background:none;color:var(--rust);cursor:pointer;font-size:12px;}
+  .empty-row td{color:var(--ink-soft);font-style:italic;text-align:center;padding:14px 0;}
+
+  table.balance{width:100%;border-collapse:collapse;font-size:13px;}
+  table.balance th{
+    text-align:left;font-weight:500;color:var(--ink-soft);font-size:11px;text-transform:uppercase;
+    letter-spacing:0.04em;padding:6px;border-bottom:1px solid var(--line);
+  }
+  table.balance td{padding:9px 6px;border-bottom:1px dotted var(--line);}
+  table.balance td.amt{text-align:right;font-family:'IBM Plex Mono',monospace;}
+  .badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;font-family:'IBM Plex Mono',monospace;}
+  .badge.owed{background:var(--sage-bg);color:var(--sage);}
+  .badge.owes{background:var(--rust-bg);color:var(--rust);}
+  .badge.even{background:var(--paper);color:var(--ink-soft);border:1px solid var(--line);}
+
+  .hint{font-size:12px;color:var(--ink-soft);margin-top:10px;line-height:1.6;}
+  .loading{text-align:center;color:var(--ink-soft);font-size:13px;padding:20px;}
+  details.section summary{cursor:pointer;font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;margin-bottom:4px;}
+
+  .identity-bar{
+    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;
+    max-width:640px;margin:12px auto 0;font-size:12px;color:var(--ink-soft);
+    background:var(--paper-2);border:1px solid var(--line);border-radius:8px;padding:8px 14px;
+  }
+  .identity-left{display:flex;align-items:center;gap:8px;}
+  .identity-left select{
+    font-family:'Inter',sans-serif;font-size:12px;border:1px solid var(--line);
+    background:#fff;border-radius:6px;padding:4px 6px;color:var(--ink);
+  }
+  .identity-left select.unset{border-color:var(--rust);color:var(--rust);}
+  .history-btn{
+    font-size:12px;border:1px solid var(--brass);color:var(--brass-dark);background:none;
+    border-radius:20px;padding:5px 12px;cursor:pointer;white-space:nowrap;
+  }
+  .history-btn:hover{background:var(--paper);}
+
+  td.by{font-family:'Inter',sans-serif;font-size:11px;color:var(--ink-soft);}
+  td.by .edited{display:block;font-style:italic;color:var(--brass-dark);}
+
+  .modal-overlay{
+    display:none;position:fixed;inset:0;background:rgba(36,33,24,0.45);z-index:50;
+    align-items:center;justify-content:center;padding:20px;
+  }
+  .modal-overlay.open{display:flex;}
+  .modal{
+    background:var(--paper);border:1px solid var(--line);border-radius:10px;
+    max-width:560px;width:100%;max-height:80vh;display:flex;flex-direction:column;
+  }
+  .modal-head{
+    display:flex;align-items:center;justify-content:space-between;padding:14px 18px;
+    border-bottom:1px solid var(--line);
+  }
+  .modal-head h3{margin:0;font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;}
+  .modal-close{border:none;background:none;font-size:18px;color:var(--ink-soft);cursor:pointer;line-height:1;}
+  .modal-body{overflow-y:auto;padding:6px 18px 18px;}
+  .hist-entry{
+    padding:9px 0;border-bottom:1px dotted var(--line);font-size:12.5px;line-height:1.5;
+  }
+  .hist-entry:last-child{border-bottom:none;}
+  .hist-entry .meta{color:var(--ink-soft);font-size:11px;margin-top:2px;}
+  .hist-entry .actor{color:var(--brass-dark);font-weight:500;}
+  .hist-empty{color:var(--ink-soft);font-style:italic;text-align:center;padding:20px 0;font-size:13px;}
+
+  .prompt-modal{max-width:360px;}
+  .prompt-message{font-size:13px;color:var(--ink-soft);margin:0 0 12px;line-height:1.5;}
+  .prompt-input{
+    width:100%;box-sizing:border-box;padding:8px 10px;font-size:14px;
+    border:1px solid var(--line);border-radius:6px;font-family:'IBM Plex Mono',monospace;margin-bottom:14px;
+  }
+  .prompt-actions{display:flex;gap:8px;justify-content:flex-end;}
+  .prompt-ok-btn{
+    border:1px solid var(--brass);background:var(--brass);color:#fff;font-size:13px;
+    border-radius:6px;padding:6px 14px;cursor:pointer;
+  }
+  .prompt-ok-btn:hover{background:var(--brass-dark);border-color:var(--brass-dark);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Joint Account</p>
+    <h1>Joint Account · Dashboard</h1>
+    <p class="shared-note">This data is shared: anyone who opens this link sees the same records, and edits sync to everyone.</p>
+  </header>
+
+  <div class="identity-bar" id="identityBar">
+    <div class="identity-left">
+      <label for="whoAmI">You are:</label>
+      <select id="whoAmI" class="unset"><option value="">Select your name…</option></select>
+      <button type="button" id="pinBtn" class="history-btn" style="padding:4px 10px;">🔑 PIN</button>
+    </div>
+    <button class="history-btn" id="historyBtn">🕘 View history</button>
+  </div>
+
+  <div id="loading" class="loading">Loading your records…</div>
+
+  <div id="app" style="display:none;">
+
+    <div class="card">
+      <h2>Summary</h2>
+      <div class="summary-grid" id="summaryGrid"></div>
+      <div class="chart-grid">
+        <div class="chart-box">
+          <div class="ctitle">Top-up share by member</div>
+          <div style="position:relative;height:220px;">
+            <canvas id="pieChart" role="img" aria-label="Pie chart of each member's share of total top-ups">Top-up share by member</canvas>
+          </div>
+        </div>
+        <div class="chart-box">
+          <div class="ctitle">Top-ups vs fair share</div>
+          <div style="position:relative;height:220px;">
+            <canvas id="barChart" role="img" aria-label="Bar chart comparing each member's total top-ups to their fair share">Top-ups vs fair share by member</canvas>
+          </div>
+        </div>
+      </div>
+      <div class="chart-box" style="margin-top:20px;">
+        <div class="ctitle">Monthly top-ups / expenses trend</div>
+        <div style="position:relative;height:240px;">
+          <canvas id="lineChart" role="img" aria-label="Line chart of monthly top-up and expense totals over time">Monthly top-ups vs expenses trend</canvas>
+        </div>
+      </div>
+      <table class="balance" style="margin-top:20px;">
+        <thead><tr><th>Member</th><th style="text-align:right">Total top-ups</th><th style="text-align:right">Fair share</th><th style="text-align:right">Balance</th></tr></thead>
+        <tbody id="balanceBody"></tbody>
+      </table>
+      <p class="hint">Balance = total top-ups − fair share. Green means this person topped up more than their share and should be paid back; orange means they still owe the difference. Fair share = total expenses ÷ number of members.</p>
+    </div>
+
+    <details class="section card">
+      <summary>Members</summary>
+      <div class="people-row" id="peopleRow" style="margin-top:12px;"></div>
+      <button class="add-person" id="addPersonBtn">+ Add member</button>
+    </details>
+
+    <details class="section card">
+      <summary>Top-ups <span class="n" id="topupCount">0</span></summary>
+      <form class="entry-form" id="topupForm" style="margin-top:12px;">
+        <div class="field"><label>Member</label><select id="topupPerson"></select></div>
+        <div class="field"><label>Amount</label><input type="number" id="topupAmount" step="0.01" min="0" placeholder="0.00" required></div>
+        <div class="field"><label>Date</label><input type="date" id="topupDate"></div>
+        <div class="field"><label>Note (optional)</label><input type="text" id="topupNote" placeholder="e.g. July top-up"></div>
+        <button type="submit">Add entry</button>
+      </form>
+      <table class="ledger">
+        <thead><tr><th>Member</th><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
+        <tbody id="topupBody"></tbody>
+      </table>
+    </details>
+
+    <details class="section card">
+      <summary>Expenses <span class="n" id="expenseCount">0</span></summary>
+      <p class="hint" style="margin-top:12px;">Enter the expense total for each period (e.g. monthly) from your own budgeting app — no need to log every transaction.</p>
+      <form class="entry-form" id="expenseForm">
+        <div class="field"><label>Amount</label><input type="number" id="expenseAmount" step="0.01" min="0" placeholder="0.00" required></div>
+        <div class="field"><label>Date</label><input type="date" id="expenseDate"></div>
+        <div class="field"><label>Note (optional)</label><input type="text" id="expenseNote" placeholder="e.g. July expense total"></div>
+        <button type="submit">Add entry</button>
+      </form>
+      <table class="ledger">
+        <thead><tr><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
+        <tbody id="expenseBody"></tbody>
+      </table>
+    </details>
+
+  </div>
+</div>
+
+<div class="modal-overlay" id="historyOverlay">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Change history</h3>
+      <button class="modal-close" id="closeHistory">×</button>
+    </div>
+    <div class="modal-body" id="historyList"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="promptOverlay">
+  <div class="modal prompt-modal">
+    <div class="modal-head">
+      <h3 id="promptTitle">Title</h3>
+      <button class="modal-close" id="promptCloseX">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="promptMessage" class="prompt-message"></p>
+      <input type="password" id="promptInput" class="prompt-input" autocomplete="off">
+      <div class="prompt-actions">
+        <button type="button" id="promptCancelBtn" class="history-btn">Cancel</button>
+        <button type="button" id="promptOkBtn" class="prompt-ok-btn">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const STORAGE_KEY = 'joint-account-shared-ledger';
+let data = { people: ['Me','Family member'], topups: [], expenses: [], history: [], pins: {} };
+let pieChart=null, barChart=null, lineChart=null;
+let currentUser = '';
+
+function uid(){ return Math.random().toString(36).slice(2,9); }
+function fmt(n){ return (Math.round(n*100)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function fmtWhen(iso){
+  if(!iso) return '—';
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+}
+
+// Hashes a PIN with SHA-256 so the raw PIN is never stored, even in the shared data.
+// Note: this runs entirely in the browser with no server, so it deters casual
+// impersonation but isn't bank-grade security — someone with real technical
+// access to the shared storage could still bypass it.
+async function sha256Hex(str){
+  const enc = new TextEncoder().encode(str);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// Generic in-page dialog. The artifact preview runs in a sandboxed frame that
+// blocks window.prompt/confirm/alert, so this replaces all of those.
+function showModal({title, message='', showInput=false, isPassword=true, showCancel=true, okLabel='OK', cancelLabel='Cancel'}){
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('promptOverlay');
+    document.getElementById('promptTitle').textContent = title;
+    const msgEl = document.getElementById('promptMessage');
+    msgEl.textContent = message;
+    msgEl.style.display = message ? 'block' : 'none';
+    const input = document.getElementById('promptInput');
+    input.style.display = showInput ? 'block' : 'none';
+    input.value = '';
+    input.type = isPassword ? 'password' : 'text';
+    const okBtn = document.getElementById('promptOkBtn');
+    const cancelBtn = document.getElementById('promptCancelBtn');
+    const closeBtn = document.getElementById('promptCloseX');
+    okBtn.textContent = okLabel;
+    cancelBtn.style.display = showCancel ? 'inline-block' : 'none';
+    overlay.classList.add('open');
+    if(showInput) setTimeout(() => input.focus(), 50);
+
+    function cleanup(result){
+      overlay.classList.remove('open');
+      okBtn.removeEventListener('click', onOk);
+      cancelBtn.removeEventListener('click', onCancel);
+      closeBtn.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+      resolve(result);
+    }
+    function onOk(){ cleanup(showInput ? input.value : true); }
+    function onCancel(){ cleanup(showInput ? null : false); }
+    function onKey(e){ if(e.key === 'Enter'){ e.preventDefault(); onOk(); } }
+    okBtn.addEventListener('click', onOk);
+    cancelBtn.addEventListener('click', onCancel);
+    closeBtn.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
+async function verifyPin(name){
+  const pin = await showModal({ title:`Enter PIN for "${name}"`, showInput:true, isPassword:true, okLabel:'Unlock' });
+  if(pin === null) return false;
+  const hash = await sha256Hex(pin);
+  if(hash !== data.pins[name]){
+    await showModal({ title:'Incorrect PIN', message:'That PIN did not match. Please try again.', showInput:false, showCancel:false });
+    return false;
+  }
+  return true;
+}
+
+async function setPinFor(name){
+  const pin = await showModal({ title:`Set a PIN for "${name}"`, message:'Choose a PIN (4+ characters).', showInput:true, isPassword:true, okLabel:'Next' });
+  if(!pin || !pin.trim()) return false;
+  const confirmPin = await showModal({ title:'Confirm PIN', showInput:true, isPassword:true, okLabel:'Save' });
+  if(confirmPin !== pin){
+    await showModal({ title:'PINs did not match', message:'No PIN was set — you can try again from the 🔑 PIN button.', showInput:false, showCancel:false });
+    return false;
+  }
+  data.pins[name] = await sha256Hex(pin);
+  await save();
+  return true;
+}
+
+// Append-only audit trail. Entries are never edited or removed through the UI,
+// even when the record they describe is later deleted — this is what lets you
+// see who removed something after the fact.
+function logAction(action, kind, details){
+  data.history.push({
+    id: uid(),
+    actor: currentUser || 'Unknown',
+    action,   // 'add' | 'delete' | 'edit'
+    kind,     // 'topup' | 'expense' | 'member'
+    details,
+    at: new Date().toISOString()
+  });
+}
+
+async function requireUser(){
+  if(!currentUser){
+    await showModal({
+      title:'Select your name first',
+      message:'Please choose who you are at the top of the page before adding, editing, or deleting entries — this is what lets everyone see who did what.',
+      showInput:false, showCancel:false
+    });
+    document.getElementById('whoAmI').focus();
+    return false;
+  }
+  return true;
+}
+
+async function load(){
+  try{
+    const res = await window.storage.get(STORAGE_KEY, true);
+    if(res && res.value){ data = JSON.parse(res.value); }
+  }catch(e){ /* no existing shared data yet, keep defaults */ }
+  if(!Array.isArray(data.history)) data.history = []; // backward-compat with data saved before history tracking existed
+  if(!data.pins || typeof data.pins !== 'object') data.pins = {}; // backward-compat with data saved before PINs existed
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='block';
+  render();
+}
+
+async function save(){
+  try{
+    await window.storage.set(STORAGE_KEY, JSON.stringify(data), true);
+  }catch(e){ console.error('Save failed', e); }
+}
+
+function render(){
+  renderIdentity();
+  renderPeople();
+  renderTopupSelect();
+  renderTopups();
+  renderExpenses();
+  renderSummary();
+  renderCharts();
+  renderHistory();
+}
+
+function renderIdentity(){
+  const sel = document.getElementById('whoAmI');
+  const prev = currentUser;
+  sel.innerHTML = '<option value="">Select your name…</option>' +
+    data.people.map(p => `<option value="${p}">${p}</option>`).join('');
+  // Keep the current selection if that name still exists among members
+  sel.value = data.people.includes(prev) ? prev : '';
+  currentUser = sel.value;
+  sel.classList.toggle('unset', !currentUser);
+}
+
+function renderPeople(){
+  const row = document.getElementById('peopleRow');
+  row.innerHTML = '';
+  data.people.forEach((p, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    const input = document.createElement('input');
+    input.value = p;
+    input.addEventListener('change', () => {
+      const newName = input.value.trim() || p;
+      if(newName !== p){
+        logAction('edit','member',`Renamed "${p}" to "${newName}"`);
+        if(data.pins && data.pins[p]){ data.pins[newName] = data.pins[p]; delete data.pins[p]; }
+        if(currentUser === p) currentUser = newName;
+      }
+      data.people[i] = newName;
+      save(); render();
+    });
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = 'Remove member';
+    del.addEventListener('click', async () => {
+      if(data.people.length <= 1) return;
+      if(!(await requireUser())) return;
+      logAction('delete','member',`Removed member "${p}"`);
+      if(data.pins) delete data.pins[p];
+      if(currentUser === p) currentUser = '';
+      data.people.splice(i,1);
+      save(); render();
+    });
+    chip.appendChild(input);
+    chip.appendChild(del);
+    row.appendChild(chip);
+  });
+}
+
+function renderTopupSelect(){
+  const sel = document.getElementById('topupPerson');
+  sel.innerHTML = data.people.map(p => `<option value="${p}">${p}</option>`).join('');
+}
+
+function renderTopups(){
+  const body = document.getElementById('topupBody');
+  document.getElementById('topupCount').textContent = data.topups.length;
+  if(data.topups.length === 0){
+    body.innerHTML = '<tr class="empty-row"><td colspan="6">No top-ups recorded yet</td></tr>';
+    return;
+  }
+  const rows = [...data.topups].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  body.innerHTML = rows.map(t => `
+    <tr>
+      <td class="name">${t.person}</td>
+      <td>${t.date || '—'}</td>
+      <td class="note">${t.note || ''}</td>
+      <td class="amt">${fmt(t.amount)}</td>
+      <td class="by">${t.createdBy || 'Unknown'}<span class="edited">${fmtWhen(t.createdAt)}</span></td>
+      <td class="del"><button data-id="${t.id}" data-kind="topup">Delete</button></td>
+    </tr>`).join('');
+  body.querySelectorAll('button[data-kind=topup]').forEach(b=>{
+    b.addEventListener('click', async () => {
+      if(!(await requireUser())) return;
+      const t = data.topups.find(x => x.id === b.dataset.id);
+      if(t) logAction('delete','topup',`Deleted top-up of ${fmt(t.amount)} from ${t.person}${t.date ? ' dated '+t.date : ''}${t.note ? ' — "'+t.note+'"' : ''}`);
+      data.topups = data.topups.filter(t => t.id !== b.dataset.id);
+      save(); render();
+    });
+  });
+}
+
+function renderExpenses(){
+  const body = document.getElementById('expenseBody');
+  document.getElementById('expenseCount').textContent = data.expenses.length;
+  if(data.expenses.length === 0){
+    body.innerHTML = '<tr class="empty-row"><td colspan="5">No expenses recorded yet</td></tr>';
+    return;
+  }
+  const rows = [...data.expenses].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  body.innerHTML = rows.map(e => `
+    <tr>
+      <td>${e.date || '—'}</td>
+      <td class="note">${e.note || ''}</td>
+      <td class="amt">${fmt(e.amount)}</td>
+      <td class="by">${e.createdBy || 'Unknown'}<span class="edited">${fmtWhen(e.createdAt)}</span></td>
+      <td class="del"><button data-id="${e.id}" data-kind="expense">Delete</button></td>
+    </tr>`).join('');
+  body.querySelectorAll('button[data-kind=expense]').forEach(b=>{
+    b.addEventListener('click', async () => {
+      if(!(await requireUser())) return;
+      const e = data.expenses.find(x => x.id === b.dataset.id);
+      if(e) logAction('delete','expense',`Deleted expense of ${fmt(e.amount)}${e.date ? ' dated '+e.date : ''}${e.note ? ' — "'+e.note+'"' : ''}`);
+      data.expenses = data.expenses.filter(e => e.id !== b.dataset.id);
+      save(); render();
+    });
+  });
+}
+
+function renderSummary(){
+  const totalTopup = data.topups.reduce((s,t)=>s+t.amount,0);
+  const totalExpense = data.expenses.reduce((s,e)=>s+e.amount,0);
+  const n = Math.max(data.people.length,1);
+  const share = totalExpense / n;
+  const remaining = totalTopup - totalExpense;
+
+  const grid = document.getElementById('summaryGrid');
+  grid.innerHTML = `
+    <div class="stat"><div class="label">Total top-ups</div><div class="val">${fmt(totalTopup)}</div></div>
+    <div class="stat"><div class="label">Total expenses</div><div class="val">${fmt(totalExpense)}</div></div>
+    <div class="stat"><div class="label">Fair share / person</div><div class="val">${fmt(share)}</div></div>
+    <div class="stat"><div class="label">Balance remaining</div><div class="val">${fmt(remaining)}</div></div>
+  `;
+
+  const perPerson = {};
+  data.people.forEach(p => perPerson[p] = 0);
+  data.topups.forEach(t => { if(perPerson[t.person] === undefined) perPerson[t.person] = 0; perPerson[t.person]+=t.amount; });
+
+  const body = document.getElementById('balanceBody');
+  body.innerHTML = data.people.map(p => {
+    const paid = perPerson[p] || 0;
+    const diff = paid - share;
+    let badge = `<span class="badge even">Settled</span>`;
+    if(diff > 0.005) badge = `<span class="badge owed">Owed back ${fmt(diff)}</span>`;
+    else if(diff < -0.005) badge = `<span class="badge owes">Still owes ${fmt(-diff)}</span>`;
+    return `<tr><td class="name">${p}</td><td class="amt">${fmt(paid)}</td><td class="amt">${fmt(share)}</td><td class="amt">${badge}</td></tr>`;
+  }).join('');
+}
+
+const PALETTE = ['#A97D3F','#4F7A5B','#B5502F','#7C5B2C','#8C9E82','#C98D5A'];
+
+function renderCharts(){
+  const totalExpense = data.expenses.reduce((s,e)=>s+e.amount,0);
+  const n = Math.max(data.people.length,1);
+  const share = totalExpense / n;
+
+  const perPerson = {};
+  data.people.forEach(p => perPerson[p] = 0);
+  data.topups.forEach(t => { if(perPerson[t.person] === undefined) perPerson[t.person] = 0; perPerson[t.person]+=t.amount; });
+
+  const labels = data.people;
+  const paidVals = labels.map(p => Math.round((perPerson[p]||0)*100)/100);
+
+  if(pieChart) pieChart.destroy();
+  pieChart = new Chart(document.getElementById('pieChart'), {
+    type:'pie',
+    data:{ labels, datasets:[{ data: paidVals, backgroundColor: labels.map((_,i)=>PALETTE[i%PALETTE.length]) }]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } } }
+  });
+
+  if(barChart) barChart.destroy();
+  barChart = new Chart(document.getElementById('barChart'), {
+    type:'bar',
+    data:{ labels, datasets:[
+      { label:'Top-ups', data: paidVals, backgroundColor:'#A97D3F' },
+      { label:'Fair share', data: labels.map(()=>Math.round(share*100)/100), backgroundColor:'#B0A489' }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'top', labels:{ boxWidth:10, font:{size:11} } } },
+      scales:{ y:{ beginAtZero:true } } }
+  });
+
+  const monthMap = {};
+  data.topups.forEach(t => { if(!t.date) return; const m=t.date.slice(0,7); monthMap[m]=monthMap[m]||{topup:0,expense:0}; monthMap[m].topup+=t.amount; });
+  data.expenses.forEach(e => { if(!e.date) return; const m=e.date.slice(0,7); monthMap[m]=monthMap[m]||{topup:0,expense:0}; monthMap[m].expense+=e.amount; });
+  const months = Object.keys(monthMap).sort();
+
+  if(lineChart) lineChart.destroy();
+  lineChart = new Chart(document.getElementById('lineChart'), {
+    type:'line',
+    data:{ labels: months, datasets:[
+      { label:'Top-ups', data: months.map(m=>Math.round(monthMap[m].topup*100)/100), borderColor:'#4F7A5B', backgroundColor:'rgba(79,122,91,0.1)', fill:true, tension:0.25 },
+      { label:'Expenses', data: months.map(m=>Math.round(monthMap[m].expense*100)/100), borderColor:'#B5502F', backgroundColor:'rgba(181,80,47,0.1)', fill:true, tension:0.25 }
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'top', labels:{ boxWidth:10, font:{size:11} } } },
+      scales:{ y:{ beginAtZero:true } } }
+  });
+}
+
+function renderHistory(){
+  const list = document.getElementById('historyList');
+  if(!data.history || data.history.length === 0){
+    list.innerHTML = '<div class="hist-empty">No changes recorded yet.</div>';
+    return;
+  }
+  const verbMap = {
+    add: { topup:'added a top-up', expense:'added an expense', member:'added a member' },
+    delete: { topup:'deleted a top-up', expense:'deleted an expense', member:'removed a member' },
+    edit: { topup:'edited a top-up', expense:'edited an expense', member:'edited a member' }
+  };
+  const rows = [...data.history].sort((a,b)=> (b.at||'').localeCompare(a.at||''));
+  list.innerHTML = rows.map(h => {
+    const verb = (verbMap[h.action] && verbMap[h.action][h.kind]) || `${h.action} ${h.kind}`;
+    return `
+      <div class="hist-entry">
+        <div><span class="actor">${h.actor}</span> ${verb}${h.details ? ': ' + h.details : ''}</div>
+        <div class="meta">${fmtWhen(h.at)}</div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('whoAmI').addEventListener('change', async (e) => {
+  const name = e.target.value;
+  if(!name){ currentUser=''; e.target.classList.add('unset'); return; }
+  if(!data.pins) data.pins = {};
+  if(data.pins[name]){
+    const ok = await verifyPin(name);
+    if(!ok){ e.target.value=''; currentUser=''; e.target.classList.add('unset'); return; }
+  } else {
+    const wantsPin = await showModal({
+      title:'Set a PIN?',
+      message:`No PIN is set yet for "${name}". Set one now so no one else can act as you?`,
+      showInput:false, showCancel:true, okLabel:'Set PIN', cancelLabel:'Skip for now'
+    });
+    if(wantsPin) await setPinFor(name);
+  }
+  currentUser = name;
+  e.target.classList.remove('unset');
+});
+
+document.getElementById('pinBtn').addEventListener('click', async () => {
+  if(!currentUser){
+    await showModal({ title:'Select your name first', message:'Pick your name from the dropdown, then you can set or change its PIN.', showInput:false, showCancel:false });
+    return;
+  }
+  if(data.pins[currentUser]){
+    const ok = await verifyPin(currentUser);
+    if(!ok) return;
+  }
+  const didSet = await setPinFor(currentUser);
+  if(didSet) await showModal({ title:'PIN updated', message:`The PIN for "${currentUser}" has been changed.`, showInput:false, showCancel:false });
+});
+
+document.getElementById('historyBtn').addEventListener('click', () => {
+  document.getElementById('historyOverlay').classList.add('open');
+});
+document.getElementById('closeHistory').addEventListener('click', () => {
+  document.getElementById('historyOverlay').classList.remove('open');
+});
+document.getElementById('historyOverlay').addEventListener('click', (e) => {
+  if(e.target.id === 'historyOverlay') e.target.classList.remove('open');
+});
+
+document.getElementById('addPersonBtn').addEventListener('click', () => {
+  logAction('add','member','Added a new member ("New member")');
+  data.people.push('New member');
+  save(); render();
+});
+
+document.getElementById('topupForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if(!(await requireUser())) return;
+  const person = document.getElementById('topupPerson').value;
+  const amount = parseFloat(document.getElementById('topupAmount').value);
+  const date = document.getElementById('topupDate').value;
+  const note = document.getElementById('topupNote').value.trim();
+  if(!person || isNaN(amount) || amount <= 0) return;
+  const now = new Date().toISOString();
+  data.topups.push({ id: uid(), person, amount, date, note, createdBy: currentUser, createdAt: now });
+  logAction('add','topup',`Added top-up of ${fmt(amount)} for ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  save(); render();
+  e.target.reset();
+});
+
+document.getElementById('expenseForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if(!(await requireUser())) return;
+  const amount = parseFloat(document.getElementById('expenseAmount').value);
+  const date = document.getElementById('expenseDate').value;
+  const note = document.getElementById('expenseNote').value.trim();
+  if(isNaN(amount) || amount <= 0) return;
+  const now = new Date().toISOString();
+  data.expenses.push({ id: uid(), amount, date, note, createdBy: currentUser, createdAt: now });
+  logAction('add','expense',`Added expense of ${fmt(amount)}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  save(); render();
+  e.target.reset();
+});
+
+load();
+</script>
+</body>
+</html>
