@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Joint Account · Dashboard</title>
+<title>JKJ Account · Dashboard</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500&display=swap');
 
@@ -184,6 +184,25 @@
   .sync-badge.ok{color:var(--sage);border-color:var(--sage);}
   .sync-badge.err{color:var(--rust);border-color:var(--rust);}
   .sync-badge.saving{color:var(--brass-dark);border-color:var(--brass);}
+
+  /* Loans */
+  .loan-item{background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-bottom:14px;}
+  .loan-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:8px;}
+  .loan-head strong{font-family:'Source Serif 4',serif;font-size:15px;}
+  .loan-sub{display:block;font-size:11px;color:var(--ink-soft);margin-top:2px;}
+  .loan-del{border:none;background:none;color:var(--rust);font-size:16px;cursor:pointer;line-height:1;padding:2px 4px;}
+  .loan-stats{display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;}
+  .loan-stats b{color:var(--ink);font-family:'IBM Plex Mono',monospace;font-weight:500;}
+  .progress-track{width:100%;height:8px;border-radius:20px;background:var(--paper-2);border:1px solid var(--line);overflow:hidden;margin-bottom:12px;}
+  .progress-fill{height:100%;background:var(--sage);border-radius:20px;transition:width .3s ease;}
+
+  /* Fixed monthly expense templates + quick-add */
+  .chip.recurring{padding:5px 8px;}
+  .chip.recurring input.namef{width:100px;}
+  .chip.recurring input.amtf{width:70px;font-family:'IBM Plex Mono',monospace;}
+  .chip-row{display:flex;flex-wrap:wrap;margin-bottom:10px;}
+  .quick-chip{font-size:12px;border:1px solid var(--line);background:var(--paper);border-radius:20px;padding:5px 12px;cursor:pointer;margin:0 6px 6px 0;}
+  .quick-chip:hover{border-color:var(--brass);color:var(--brass-dark);}
 </style>
 </head>
 <body>
@@ -238,6 +257,23 @@
       <p class="hint">Balance = total top-ups − fair share. Green means this person topped up more than their share and should be paid back; orange means they still owe the difference. Fair share = total expenses ÷ number of members.</p>
     </div>
 
+    <div class="card" id="loanSummaryCard" style="display:none;">
+      <h2>Loans overview</h2>
+      <div class="summary-grid" id="loanOverviewGrid"></div>
+      <div id="loanOverviewBars" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="card" id="recurringSummaryCard" style="display:none;">
+      <h2>Fixed monthly expenses overview</h2>
+      <div class="summary-grid" id="recurringOverviewGrid"></div>
+      <div class="chart-box" style="margin-top:14px;max-width:340px;">
+        <div class="ctitle">Fixed monthly expenses breakdown</div>
+        <div style="position:relative;height:220px;">
+          <canvas id="recurringPieChart" role="img" aria-label="Pie chart of fixed monthly expenses by item">Fixed monthly expenses breakdown</canvas>
+        </div>
+      </div>
+    </div>
+
     <details class="section card">
       <summary>Members</summary>
       <div class="people-row" id="peopleRow" style="margin-top:12px;"></div>
@@ -262,6 +298,7 @@
     <details class="section card">
       <summary>Expenses <span class="n" id="expenseCount">0</span></summary>
       <p class="hint" style="margin-top:12px;">Enter the expense total for each period (e.g. monthly) from your own budgeting app — no need to log every transaction.</p>
+      <div class="chip-row" id="recurringChips"></div>
       <form class="entry-form" id="expenseForm">
         <div class="field"><label>Amount</label><input type="number" id="expenseAmount" step="0.01" placeholder="0.00 (negative allowed)" required></div>
         <div class="field"><label>Date</label><input type="date" id="expenseDate"></div>
@@ -272,6 +309,27 @@
         <thead><tr><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
         <tbody id="expenseBody"></tbody>
       </table>
+    </details>
+
+    <details class="section card">
+      <summary>Fixed Monthly Expenses <span class="n" id="recurringCount">0</span></summary>
+      <p class="hint" style="margin-top:12px;">Set up recurring items once (e.g. rent, wifi, subscriptions). Use the quick-add buttons in the Expenses section above to log them each month without retyping — the total below is your monthly budget reference, it does not get added anywhere automatically.</p>
+      <div class="stat" style="max-width:220px;margin:10px 0 14px;"><div class="label">Monthly budget total</div><div class="val" id="recurringTotal">0.00</div></div>
+      <div class="people-row" id="recurringRow"></div>
+      <button class="add-person" id="addRecurringBtn">+ Add fixed expense</button>
+    </details>
+
+    <details class="section card">
+      <summary>Loans <span class="n" id="loanCount">0</span></summary>
+      <div class="summary-grid" id="loanSummaryGrid" style="margin-top:12px;"></div>
+      <form class="entry-form" id="loanForm" style="margin-top:14px;">
+        <div class="field"><label>Lender / Person</label><input type="text" id="loanPerson" placeholder="e.g. X" required></div>
+        <div class="field"><label>Principal</label><input type="number" id="loanPrincipal" step="0.01" placeholder="35000" required></div>
+        <div class="field"><label>Date</label><input type="date" id="loanDate"></div>
+        <div class="field"><label>Note (optional)</label><input type="text" id="loanNote" placeholder="e.g. personal loan"></div>
+        <button type="submit">Add loan</button>
+      </form>
+      <div id="loansList" style="margin-top:14px;"></div>
     </details>
 
   </div>
@@ -314,8 +372,8 @@
 const SHEETDB_API = 'https://sheetdb.io/api/v1/dl4u8lwemdjk2';
 const RECORD_ID = 'ledger';
 
-let data = { people: ['Me','Family member'], topups: [], expenses: [], history: [], pins: {} };
-let pieChart=null, barChart=null, lineChart=null;
+let data = { people: ['Me','Family member'], topups: [], expenses: [], history: [], pins: {}, loans: [], loanPayments: [], recurring: [] };
+let pieChart=null, barChart=null, lineChart=null, recurringPieChart=null;
 let currentUser = '';
 
 function uid(){ return Math.random().toString(36).slice(2,9); }
@@ -467,6 +525,9 @@ async function load(){
   }
   if(!Array.isArray(data.history)) data.history = []; // backward-compat with data saved before history tracking existed
   if(!data.pins || typeof data.pins !== 'object') data.pins = {}; // backward-compat with data saved before PINs existed
+  if(!Array.isArray(data.loans)) data.loans = []; // backward-compat with data saved before loans existed
+  if(!Array.isArray(data.loanPayments)) data.loanPayments = []; // backward-compat with data saved before loans existed
+  if(!Array.isArray(data.recurring)) data.recurring = []; // backward-compat with data saved before fixed monthly expenses existed
   document.getElementById('loading').style.display='none';
   document.getElementById('app').style.display='block';
   render();
@@ -494,8 +555,12 @@ function render(){
   renderTopupSelect();
   renderTopups();
   renderExpenses();
+  renderRecurring();
+  renderLoans();
   renderSummary();
   renderCharts();
+  renderLoanOverview();
+  renderRecurringOverview();
   renderHistory();
 }
 
@@ -606,6 +671,181 @@ function renderExpenses(){
   });
 }
 
+// ---- Fixed monthly expense templates ------------------------------------
+// These are templates only (name + amount). They never get added to
+// data.expenses by themselves — the quick-add chips in the Expenses section
+// just prefill the manual entry form so the actual entry is still a normal,
+// dated expense row like any other.
+function renderRecurring(){
+  const total = data.recurring.reduce((s,r)=>s+r.amount,0);
+  document.getElementById('recurringTotal').textContent = fmt(total);
+  document.getElementById('recurringCount').textContent = data.recurring.length;
+
+  const row = document.getElementById('recurringRow');
+  row.innerHTML = '';
+  data.recurring.forEach((r,i) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip recurring';
+    const nameInput = document.createElement('input');
+    nameInput.className = 'namef';
+    nameInput.value = r.name;
+    nameInput.placeholder = 'Name';
+    nameInput.addEventListener('change', () => {
+      const newName = nameInput.value.trim() || r.name;
+      if(newName !== r.name) logAction('edit','recurring',`Renamed fixed expense "${r.name}" to "${newName}"`);
+      data.recurring[i].name = newName;
+      save(); render();
+    });
+    const amtInput = document.createElement('input');
+    amtInput.className = 'amtf';
+    amtInput.type = 'number';
+    amtInput.step = '0.01';
+    amtInput.value = r.amount;
+    amtInput.placeholder = 'Amount';
+    amtInput.addEventListener('change', () => {
+      const newAmt = parseFloat(amtInput.value);
+      if(!isNaN(newAmt) && newAmt !== r.amount){
+        logAction('edit','recurring',`Changed amount for "${r.name}" from ${fmt(r.amount)} to ${fmt(newAmt)}`);
+        data.recurring[i].amount = newAmt;
+        save(); render();
+      }
+    });
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = 'Remove fixed expense';
+    del.addEventListener('click', async () => {
+      if(!(await requireUser())) return;
+      logAction('delete','recurring',`Removed fixed expense "${r.name}" (${fmt(r.amount)})`);
+      data.recurring.splice(i,1);
+      save(); render();
+    });
+    chip.appendChild(nameInput);
+    chip.appendChild(amtInput);
+    chip.appendChild(del);
+    row.appendChild(chip);
+  });
+
+  const quick = document.getElementById('recurringChips');
+  if(data.recurring.length === 0){
+    quick.innerHTML = '';
+  } else {
+    quick.innerHTML = data.recurring.map(r => `<button type="button" class="quick-chip" data-quick="${r.id}">${r.name} · ${fmt(r.amount)}</button>`).join('');
+    quick.querySelectorAll('button[data-quick]').forEach(b => {
+      b.addEventListener('click', () => {
+        const r = data.recurring.find(x => x.id === b.dataset.quick);
+        if(!r) return;
+        document.getElementById('expenseAmount').value = r.amount;
+        document.getElementById('expenseNote').value = r.note ? r.note : r.name;
+        const dateInput = document.getElementById('expenseDate');
+        if(!dateInput.value) dateInput.value = new Date().toISOString().slice(0,10);
+      });
+    });
+  }
+}
+
+// ---- Loans ---------------------------------------------------------------
+// Fully separate ledger: money borrowed from someone, tracked against
+// repayments logged over time. Never touches topups/expenses/balance math.
+function renderLoans(){
+  const totalBorrowed = data.loans.reduce((s,l)=>s+l.principal,0);
+  const totalRepaid = data.loanPayments.reduce((s,p)=>s+p.amount,0);
+  const totalRemaining = totalBorrowed - totalRepaid;
+
+  document.getElementById('loanCount').textContent = data.loans.length;
+  document.getElementById('loanSummaryGrid').innerHTML = `
+    <div class="stat"><div class="label">Total borrowed</div><div class="val">${fmt(totalBorrowed)}</div></div>
+    <div class="stat"><div class="label">Total repaid</div><div class="val">${fmt(totalRepaid)}</div></div>
+    <div class="stat"><div class="label">Total remaining</div><div class="val">${fmt(totalRemaining)}</div></div>
+  `;
+
+  const list = document.getElementById('loansList');
+  if(data.loans.length === 0){
+    list.innerHTML = '<p class="hint">No loans recorded yet — add one above.</p>';
+    return;
+  }
+
+  list.innerHTML = data.loans.map(loan => {
+    const payments = data.loanPayments.filter(p => p.loanId === loan.id).sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+    const repaid = payments.reduce((s,p)=>s+p.amount,0);
+    const remaining = loan.principal - repaid;
+    const pct = loan.principal > 0 ? Math.min(100, Math.max(0, (repaid/loan.principal)*100)) : 0;
+    const rows = payments.length === 0
+      ? '<tr class="empty-row"><td colspan="5">No repayments yet</td></tr>'
+      : payments.map(p => `
+        <tr>
+          <td>${p.date || '—'}</td>
+          <td class="note">${p.note || ''}</td>
+          <td class="amt">${fmt(p.amount)}</td>
+          <td class="by">${p.createdBy || 'Unknown'}<span class="edited">${fmtWhen(p.createdAt)}</span></td>
+          <td class="del"><button data-id="${p.id}" data-loan="${loan.id}" data-kind="loanpayment">Delete</button></td>
+        </tr>`).join('');
+    return `
+      <div class="loan-item" data-loan-id="${loan.id}">
+        <div class="loan-head">
+          <div>
+            <strong>${loan.person}</strong>
+            <span class="loan-sub">${loan.date ? 'borrowed ' + loan.date : ''}${loan.note ? (loan.date ? ' — ' : '') + loan.note : ''}</span>
+          </div>
+          <button class="loan-del" data-loan-del="${loan.id}" title="Delete loan">×</button>
+        </div>
+        <div class="loan-stats">
+          <span>Principal: <b>${fmt(loan.principal)}</b></span>
+          <span>Repaid: <b>${fmt(repaid)}</b></span>
+          <span>Remaining: <b>${fmt(remaining)}</b></span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
+        <form class="entry-form" data-loan-form="${loan.id}">
+          <div class="field"><label>Repayment</label><input type="number" step="0.01" class="repay-amount" placeholder="0.00" required></div>
+          <div class="field"><label>Date</label><input type="date" class="repay-date"></div>
+          <div class="field"><label>Note (optional)</label><input type="text" class="repay-note" placeholder="e.g. August repayment"></div>
+          <button type="submit">Add repayment</button>
+        </form>
+        <table class="ledger">
+          <thead><tr><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('form[data-loan-form]').forEach(f => {
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if(!(await requireUser())) return;
+      const loanId = f.dataset.loanForm;
+      const amount = parseFloat(f.querySelector('.repay-amount').value);
+      const date = f.querySelector('.repay-date').value;
+      const note = f.querySelector('.repay-note').value.trim();
+      if(isNaN(amount) || amount === 0) return;
+      const now = new Date().toISOString();
+      const loan = data.loans.find(l => l.id === loanId);
+      data.loanPayments.push({ id: uid(), loanId, amount, date, note, createdBy: currentUser, createdAt: now });
+      logAction('add','loanpayment',`Added repayment of ${fmt(amount)} for loan with ${loan ? loan.person : 'unknown'}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+      save(); render();
+    });
+  });
+  list.querySelectorAll('button[data-kind=loanpayment]').forEach(b => {
+    b.addEventListener('click', async () => {
+      if(!(await requireUser())) return;
+      const p = data.loanPayments.find(x => x.id === b.dataset.id);
+      const loan = data.loans.find(l => l.id === b.dataset.loan);
+      if(p) logAction('delete','loanpayment',`Deleted repayment of ${fmt(p.amount)} for loan with ${loan ? loan.person : 'unknown'}${p.date ? ' dated '+p.date : ''}`);
+      data.loanPayments = data.loanPayments.filter(x => x.id !== b.dataset.id);
+      save(); render();
+    });
+  });
+  list.querySelectorAll('button[data-loan-del]').forEach(b => {
+    b.addEventListener('click', async () => {
+      if(!(await requireUser())) return;
+      const loanId = b.dataset.loanDel;
+      const loan = data.loans.find(l => l.id === loanId);
+      logAction('delete','loan',`Deleted loan with ${loan ? loan.person : 'unknown'}${loan ? ' (principal '+fmt(loan.principal)+')' : ''}`);
+      data.loans = data.loans.filter(l => l.id !== loanId);
+      data.loanPayments = data.loanPayments.filter(p => p.loanId !== loanId);
+      save(); render();
+    });
+  });
+}
+
 function renderSummary(){
   const totalTopup = data.topups.reduce((s,t)=>s+t.amount,0);
   const totalExpense = data.expenses.reduce((s,e)=>s+e.amount,0);
@@ -688,6 +928,68 @@ function renderCharts(){
   });
 }
 
+// ---- Loans overview (shown in top Summary section) ----------------------
+function renderLoanOverview(){
+  const card = document.getElementById('loanSummaryCard');
+  if(data.loans.length === 0){
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'block';
+
+  const totalBorrowed = data.loans.reduce((s,l)=>s+l.principal,0);
+  const totalRepaid = data.loanPayments.reduce((s,p)=>s+p.amount,0);
+  const totalRemaining = totalBorrowed - totalRepaid;
+
+  document.getElementById('loanOverviewGrid').innerHTML = `
+    <div class="stat"><div class="label">Total borrowed</div><div class="val">${fmt(totalBorrowed)}</div></div>
+    <div class="stat"><div class="label">Total repaid</div><div class="val">${fmt(totalRepaid)}</div></div>
+    <div class="stat"><div class="label">Total remaining</div><div class="val">${fmt(totalRemaining)}</div></div>
+  `;
+
+  const bars = document.getElementById('loanOverviewBars');
+  bars.innerHTML = data.loans.map(loan => {
+    const repaid = data.loanPayments.filter(p => p.loanId === loan.id).reduce((s,p)=>s+p.amount,0);
+    const remaining = loan.principal - repaid;
+    const pct = loan.principal > 0 ? Math.min(100, Math.max(0, (repaid/loan.principal)*100)) : 0;
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-soft);margin-bottom:4px;">
+          <span>${loan.person}</span>
+          <span>${fmt(repaid)} / ${fmt(loan.principal)} repaid · ${fmt(remaining)} remaining</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
+      </div>`;
+  }).join('');
+}
+
+// ---- Fixed monthly expenses overview (shown in top Summary section) -----
+function renderRecurringOverview(){
+  const card = document.getElementById('recurringSummaryCard');
+  if(data.recurring.length === 0){
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'block';
+
+  const total = data.recurring.reduce((s,r)=>s+r.amount,0);
+  document.getElementById('recurringOverviewGrid').innerHTML = `
+    <div class="stat"><div class="label">Monthly budget total</div><div class="val">${fmt(total)}</div></div>
+    <div class="stat"><div class="label">Fixed items</div><div class="val">${data.recurring.length}</div></div>
+  `;
+
+  const labels = data.recurring.map(r => r.name);
+  const vals = data.recurring.map(r => Math.round(r.amount*100)/100);
+
+  if(recurringPieChart) recurringPieChart.destroy();
+  recurringPieChart = new Chart(document.getElementById('recurringPieChart'), {
+    type:'pie',
+    data:{ labels, datasets:[{ data: vals, backgroundColor: labels.map((_,i)=>PALETTE[i%PALETTE.length]) }]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ position:'bottom', labels:{ boxWidth:10, font:{size:11} } } } }
+  });
+}
+
 function renderHistory(){
   const list = document.getElementById('historyList');
   if(!data.history || data.history.length === 0){
@@ -695,9 +997,9 @@ function renderHistory(){
     return;
   }
   const verbMap = {
-    add: { topup:'added a top-up', expense:'added an expense', member:'added a member' },
-    delete: { topup:'deleted a top-up', expense:'deleted an expense', member:'removed a member' },
-    edit: { topup:'edited a top-up', expense:'edited an expense', member:'edited a member' }
+    add: { topup:'added a top-up', expense:'added an expense', member:'added a member', loan:'added a loan', loanpayment:'added a loan repayment', recurring:'added a fixed expense' },
+    delete: { topup:'deleted a top-up', expense:'deleted an expense', member:'removed a member', loan:'deleted a loan', loanpayment:'deleted a loan repayment', recurring:'removed a fixed expense' },
+    edit: { topup:'edited a top-up', expense:'edited an expense', member:'edited a member', loan:'edited a loan', loanpayment:'edited a loan repayment', recurring:'edited a fixed expense' }
   };
   const rows = [...data.history].sort((a,b)=> (b.at||'').localeCompare(a.at||''));
   list.innerHTML = rows.map(h => {
@@ -783,6 +1085,27 @@ document.getElementById('expenseForm').addEventListener('submit', async (e) => {
   const now = new Date().toISOString();
   data.expenses.push({ id: uid(), amount, date, note, createdBy: currentUser, createdAt: now });
   logAction('add','expense',`Added expense of ${fmt(amount)}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  save(); render();
+  e.target.reset();
+});
+
+document.getElementById('addRecurringBtn').addEventListener('click', () => {
+  logAction('add','recurring','Added a new fixed expense ("New fixed expense")');
+  data.recurring.push({ id: uid(), name: 'New fixed expense', amount: 0, note: '', createdBy: currentUser, createdAt: new Date().toISOString() });
+  save(); render();
+});
+
+document.getElementById('loanForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if(!(await requireUser())) return;
+  const person = document.getElementById('loanPerson').value.trim();
+  const principal = parseFloat(document.getElementById('loanPrincipal').value);
+  const date = document.getElementById('loanDate').value;
+  const note = document.getElementById('loanNote').value.trim();
+  if(!person || isNaN(principal) || principal === 0) return;
+  const now = new Date().toISOString();
+  data.loans.push({ id: uid(), person, principal, date, note, createdBy: currentUser, createdAt: now });
+  logAction('add','loan',`Added loan of ${fmt(principal)} with ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
   save(); render();
   e.target.reset();
 });
