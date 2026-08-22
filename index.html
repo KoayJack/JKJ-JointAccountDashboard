@@ -209,9 +209,9 @@
 <div class="wrap">
 
   <header>
-    <p class="eyebrow">Joint Account</p>
-    <h1>Joint Account · Dashboard</h1>
-    <p class="shared-note">This data is shared via Google Sheets (through SheetDB): anyone with this file sees the same records, and edits sync to everyone. <span id="syncBadge" class="sync-badge">—</span></p>
+    <p class="eyebrow">JKJ Account</p>
+    <h1>JKJ Account · Dashboard</h1>
+    <p class="shared-note">Data store / share in Google Sheet <span id="syncBadge" class="sync-badge">—</span></p>
   </header>
 
   <div class="identity-bar" id="identityBar">
@@ -364,15 +364,38 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
-// ---- SheetDB connection ------------------------------------------------
-// Your Google Sheet must have a header row with exactly two columns: id, value.
-// All app data is stored as one JSON blob in the row where id = "ledger".
-// This mirrors how the old window.storage version worked, just backed by
-// your own Google Sheet instead of Claude's artifact storage.
-const SHEETDB_API = 'https://sheetdb.io/api/v1/dl4u8lwemdjk2';
-const RECORD_ID = 'ledger';
+// ---- Apps Script backend connection ---------------------------------
+// Your Google Sheet needs 7 tabs, with EXACT (case-sensitive) names and
+// header rows as shown below. Data is normalized across them (one row per
+// record) so there is no single-cell size limit — and no third-party
+// request-count limit either, since this now talks directly to your own
+// Apps Script web app instead of SheetDB.
+//
+//   Tab "People"        -> columns: name | pin_hash
+//   Tab "Topups"        -> columns: id | person | amount | date | note | createdBy | createdAt
+//   Tab "Expenses"      -> columns: id | amount | date | note | createdBy | createdAt
+//   Tab "Recurring"     -> columns: id | name | amount | note | createdBy | createdAt
+//   Tab "Loans"         -> columns: id | person | principal | date | note | createdBy | createdAt
+//   Tab "LoanPayments"  -> columns: id | loanId | amount | date | note | createdBy | createdAt
+//   Tab "History"       -> columns: id | actor | action | kind | details | at
+//
+// Paste the /exec URL from Deploy > New deployment (Web app) here:
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzu3K5y4B05gqMDe22_alumcz7rVyRyLITeQTtf4v-re4mKrzpXYcc1Djuqb2d--uDH/exec';
+const SHEETS = {
+  people: 'People', topups: 'Topups', expenses: 'Expenses',
+  recurring: 'Recurring', loans: 'Loans', loanPayments: 'LoanPayments', history: 'History'
+};
 
-let data = { people: ['Me','Family member'], topups: [], expenses: [], history: [], pins: {}, loans: [], loanPayments: [], recurring: [] };
+// ---- One-time migration of the OLD single-cell "id/value" blob ----------
+// Leave as null to look for the legacy data on the spreadsheet's default
+// (first/leftmost) tab, same as the old version did. If your old blob tab
+// is NOT the leftmost tab anymore, set this to its exact name instead, e.g.
+// const LEGACY_SHEET = 'Sheet1';
+const LEGACY_SHEET = null;
+const LEGACY_RECORD_ID = 'ledger';
+const MIGRATION_MARKER_ID = '__migration_complete__'; // written to History once migration fully succeeds, so it's never re-attempted or re-checked
+
+let data = { people: [], topups: [], expenses: [], recurring: [], loans: [], loanPayments: [], history: [], pins: {} };
 let pieChart=null, barChart=null, lineChart=null, recurringPieChart=null;
 let currentUser = '';
 
@@ -394,8 +417,119 @@ function setSyncBadge(state){
   else if(state === 'err'){ el.textContent = 'Sync failed — check connection'; el.classList.add('err'); }
   else { el.textContent = '—'; }
 }
+function setLoadingText(text){
+  const el = document.getElementById('loading');
+  if(el) el.textContent = text;
+}
 
-// Hashes a PIN with SHA-256 so the raw PIN is never stored, even in the shared data.
+// Retries a flaky async call a couple of times with a short backoff before
+// giving up — smooths over transient network hiccups / SheetDB rate limits
+// so a single blip doesn't abort an entire action or migration.
+async function withRetry(fn, retries = 2, delayMs = 700){
+  let lastErr;
+  for(let attempt = 0; attempt <= retries; attempt++){
+    try{ return await fn(); }
+    catch(e){
+      lastErr = e;
+      if(attempt < retries) await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+// ---- Low-level Apps Script helpers (one tab = one "table") --------------
+async function sdbGetAll(sheet){
+  return withRetry(async () => {
+    const url = `${APPS_SCRIPT_URL}?action=list&sheet=${encodeURIComponent(sheet)}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error(`GET ${sheet} failed: HTTP ${res.status}`);
+    const json = await res.json();
+    if(json && json.error) throw new Error(json.error);
+    return json;
+  });
+}
+async function sdbCreate(sheet, rowObj){
+  return withRetry(async () => {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      // text/plain avoids a CORS preflight (Apps Script web apps don't handle OPTIONS);
+      // the body is still valid JSON and is parsed as such on the server.
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'create', sheet, data: rowObj })
+    });
+    if(!res.ok) throw new Error(`POST ${sheet} failed: HTTP ${res.status}`);
+    const json = await res.json();
+    if(json && json.error) throw new Error(json.error);
+    return json;
+  });
+}
+async function sdbUpdate(sheet, keyColumn, keyValue, patchObj){
+  return withRetry(async () => {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'update', sheet, keyColumn, keyValue, data: patchObj })
+    });
+    if(!res.ok) throw new Error(`PATCH ${sheet} failed: HTTP ${res.status}`);
+    const json = await res.json();
+    if(json && json.error) throw new Error(json.error);
+    return json;
+  });
+}
+async function sdbDelete(sheet, keyColumn, keyValue){
+  return withRetry(async () => {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'delete', sheet, keyColumn, keyValue })
+    });
+    if(!res.ok) throw new Error(`DELETE ${sheet} failed: HTTP ${res.status}`);
+    const json = await res.json();
+    if(json && json.error) throw new Error(json.error);
+    return json;
+  });
+}
+
+// Runs a SheetDB write in the background and reflects success/failure in the
+// sync badge. The UI has already been updated optimistically before this
+// runs, so a failure here just means "not synced yet" rather than "nothing happened".
+async function commit(promise, label){
+  setSyncBadge('saving');
+  try{
+    await promise;
+    setSyncBadge('ok');
+  }catch(e){
+    console.error(label + ' failed', e);
+    setSyncBadge('err');
+  }
+}
+
+// Runs many writes with limited concurrency and a short pause between
+// batches (gentler on SheetDB's rate limits than firing everything at once).
+// Each item is retried a couple of times on its own; if it still fails, it's
+// collected via onItemError instead of aborting the rest — so a migration
+// can get as far as possible and report exactly what's still missing.
+async function runInBatches(items, fn, { batchSize = 3, pauseMs = 300, onItemError } = {}){
+  for(let i = 0; i < items.length; i += batchSize){
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map(async item => {
+      try{ await withRetry(() => fn(item)); }
+      catch(e){
+        console.error('Item failed after retries', item, e);
+        if(onItemError) onItemError(item, e);
+      }
+    }));
+    if(i + batchSize < items.length) await new Promise(r => setTimeout(r, pauseMs));
+  }
+}
+
+function uniqueMemberName(base){
+  let name = base, i = 1;
+  while(data.people.includes(name)){ i += 1; name = `${base} ${i}`; }
+  return name;
+}
+
+// Hashes a PIN with SHA-256 so the raw PIN is never stored, even in the shared sheet.
 // Note: this runs entirely in the browser with no server, so it deters casual
 // impersonation but isn't bank-grade security — someone with real technical
 // access to the shared spreadsheet could still bypass it.
@@ -406,7 +540,7 @@ async function sha256Hex(str){
 }
 
 // Generic in-page dialog, used instead of window.prompt/confirm/alert so this
-// still works the same whether the page is opened directly or embedded somewhere.
+// still works the same wherever the page is hosted.
 function showModal({title, message='', showInput=false, isPassword=true, showCancel=true, okLabel='OK', cancelLabel='Cancel'}){
   return new Promise((resolve) => {
     const overlay = document.getElementById('promptOverlay');
@@ -463,23 +597,27 @@ async function setPinFor(name){
     await showModal({ title:'PINs did not match', message:'No PIN was set — you can try again from the 🔑 PIN button.', showInput:false, showCancel:false });
     return false;
   }
-  data.pins[name] = await sha256Hex(pin);
-  await save();
+  const hash = await sha256Hex(pin);
+  data.pins[name] = hash;
+  await commit(sdbUpdate(SHEETS.people, 'name', name, { pin_hash: hash }), 'set pin');
   return true;
 }
 
 // Append-only audit trail. Entries are never edited or removed through the UI,
 // even when the record they describe is later deleted — this is what lets you
-// see who removed something after the fact.
+// see who removed something after the fact. Returns the entry so callers can
+// also persist it to the History tab.
 function logAction(action, kind, details){
-  data.history.push({
+  const entry = {
     id: uid(),
     actor: currentUser || 'Unknown',
     action,   // 'add' | 'delete' | 'edit'
-    kind,     // 'topup' | 'expense' | 'member'
+    kind,     // 'topup' | 'expense' | 'member' | 'loan' | 'loanpayment' | 'recurring'
     details,
     at: new Date().toISOString()
-  });
+  };
+  data.history.push(entry);
+  return entry;
 }
 
 async function requireUser(){
@@ -495,58 +633,212 @@ async function requireUser(){
   return true;
 }
 
+// ---- Legacy blob migration ------------------------------------------------
+function legacyUrl(){
+  const params = new URLSearchParams({ action: 'search', id: LEGACY_RECORD_ID, column: 'id', value: LEGACY_RECORD_ID });
+  if(LEGACY_SHEET) params.set('sheet', LEGACY_SHEET);
+  return `${APPS_SCRIPT_URL}?${params.toString()}`;
+}
+async function fetchLegacyBlob(){
+  try{
+    const res = await fetch(legacyUrl());
+    if(!res.ok) return null;
+    const rows = await res.json();
+    if(!Array.isArray(rows) || rows.length === 0 || !rows[0].value) return null;
+    return JSON.parse(rows[0].value);
+  }catch(e){
+    console.error('Legacy blob check failed', e);
+    return null;
+  }
+}
+// Migrates whatever hasn't already been copied over. Safe to call again on
+// a later reload: anything already present in the new tabs (matched by id,
+// or by name for People) is skipped, so a partial failure resumes cleanly
+// instead of duplicating rows or having to start over. Returns a list of
+// human-readable descriptions for anything that still failed after retries.
+async function migrateLegacyToNewTabs(legacy, existing){
+  const failures = [];
+
+  const existingPeople = new Set(existing.people);
+  const existingTopupIds = new Set(existing.topups.map(t => t.id));
+  const existingExpenseIds = new Set(existing.expenses.map(e => e.id));
+  const existingRecurringIds = new Set(existing.recurring.map(r => r.id));
+  const existingLoanIds = new Set(existing.loans.map(l => l.id));
+  const existingLoanPaymentIds = new Set(existing.loanPayments.map(p => p.id));
+  const existingHistoryIds = new Set(existing.history.map(h => h.id));
+
+  const pins = legacy.pins || {};
+  const people = (legacy.people || []).filter(name => !existingPeople.has(name));
+  await runInBatches(people,
+    name => sdbCreate(SHEETS.people, { name, pin_hash: pins[name] || '' }),
+    { onItemError: (item) => failures.push(`Member: ${item}`) });
+
+  const topups = (legacy.topups || []).filter(t => t.id && !existingTopupIds.has(t.id));
+  await runInBatches(topups,
+    t => sdbCreate(SHEETS.topups, {
+      id: t.id, person: t.person, amount: t.amount, date: t.date || '',
+      note: t.note || '', createdBy: t.createdBy || '', createdAt: t.createdAt || ''
+    }),
+    { onItemError: (item) => failures.push(`Top-up: ${item.person} ${fmt(item.amount||0)}`) });
+
+  const expenses = (legacy.expenses || []).filter(e => e.id && !existingExpenseIds.has(e.id));
+  await runInBatches(expenses,
+    e => sdbCreate(SHEETS.expenses, {
+      id: e.id, amount: e.amount, date: e.date || '',
+      note: e.note || '', createdBy: e.createdBy || '', createdAt: e.createdAt || ''
+    }),
+    { onItemError: (item) => failures.push(`Expense: ${fmt(item.amount||0)} ${item.date||''}`) });
+
+  const recurring = (legacy.recurring || []).filter(r => r.id && !existingRecurringIds.has(r.id));
+  await runInBatches(recurring,
+    r => sdbCreate(SHEETS.recurring, {
+      id: r.id, name: r.name, amount: r.amount,
+      note: r.note || '', createdBy: r.createdBy || '', createdAt: r.createdAt || ''
+    }),
+    { onItemError: (item) => failures.push(`Fixed expense: ${item.name}`) });
+
+  const loans = (legacy.loans || []).filter(l => l.id && !existingLoanIds.has(l.id));
+  await runInBatches(loans,
+    l => sdbCreate(SHEETS.loans, {
+      id: l.id, person: l.person, principal: l.principal, date: l.date || '',
+      note: l.note || '', createdBy: l.createdBy || '', createdAt: l.createdAt || ''
+    }),
+    { onItemError: (item) => failures.push(`Loan: ${item.person} ${fmt(item.principal||0)}`) });
+
+  const loanPayments = (legacy.loanPayments || []).filter(p => p.id && !existingLoanPaymentIds.has(p.id));
+  await runInBatches(loanPayments,
+    p => sdbCreate(SHEETS.loanPayments, {
+      id: p.id, loanId: p.loanId, amount: p.amount, date: p.date || '',
+      note: p.note || '', createdBy: p.createdBy || '', createdAt: p.createdAt || ''
+    }),
+    { onItemError: (item) => failures.push(`Loan repayment: ${fmt(item.amount||0)}`) });
+
+  const history = (legacy.history || []).filter(h => h.id && !existingHistoryIds.has(h.id));
+  await runInBatches(history,
+    h => sdbCreate(SHEETS.history, {
+      id: h.id, actor: h.actor || '', action: h.action || '',
+      kind: h.kind || '', details: h.details || '', at: h.at || ''
+    }),
+    { onItemError: () => failures.push('History entry') });
+
+  return failures;
+}
+
 // ---- Load from / save to the Google Sheet via SheetDB -------------------
+async function fetchAllTabs(){
+  const [peopleRows, topupRows, expenseRows, recurringRows, loanRows, loanPaymentRows, historyRows] = await Promise.all([
+    sdbGetAll(SHEETS.people),
+    sdbGetAll(SHEETS.topups),
+    sdbGetAll(SHEETS.expenses),
+    sdbGetAll(SHEETS.recurring),
+    sdbGetAll(SHEETS.loans),
+    sdbGetAll(SHEETS.loanPayments),
+    sdbGetAll(SHEETS.history)
+  ]);
+  return { peopleRows, topupRows, expenseRows, recurringRows, loanRows, loanPaymentRows, historyRows };
+}
+
+function applyTabRows({ peopleRows, topupRows, expenseRows, recurringRows, loanRows, loanPaymentRows, historyRows }){
+  data.people = peopleRows.map(r => r.name).filter(Boolean);
+  data.pins = {};
+  peopleRows.forEach(r => { if(r.name && r.pin_hash) data.pins[r.name] = r.pin_hash; });
+
+  data.topups = topupRows.map(r => ({
+    id: r.id, person: r.person, amount: parseFloat(r.amount) || 0,
+    date: r.date, note: r.note, createdBy: r.createdBy, createdAt: r.createdAt
+  }));
+  data.expenses = expenseRows.map(r => ({
+    id: r.id, amount: parseFloat(r.amount) || 0,
+    date: r.date, note: r.note, createdBy: r.createdBy, createdAt: r.createdAt
+  }));
+  data.recurring = recurringRows.map(r => ({
+    id: r.id, name: r.name, amount: parseFloat(r.amount) || 0,
+    note: r.note, createdBy: r.createdBy, createdAt: r.createdAt
+  }));
+  data.loans = loanRows.map(r => ({
+    id: r.id, person: r.person, principal: parseFloat(r.principal) || 0,
+    date: r.date, note: r.note, createdBy: r.createdBy, createdAt: r.createdAt
+  }));
+  data.loanPayments = loanPaymentRows.map(r => ({
+    id: r.id, loanId: r.loanId, amount: parseFloat(r.amount) || 0,
+    date: r.date, note: r.note, createdBy: r.createdBy, createdAt: r.createdAt
+  }));
+  // The migration marker lives in History too, but it's not a real change to show in the log.
+  data.history = historyRows.filter(r => r.id !== MIGRATION_MARKER_ID).map(r => ({
+    id: r.id, actor: r.actor, action: r.action, kind: r.kind, details: r.details, at: r.at
+  }));
+}
+
 async function load(){
   setSyncBadge('saving');
   try{
-    const res = await fetch(`${SHEETDB_API}/search?id=${encodeURIComponent(RECORD_ID)}`);
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    const rows = await res.json();
-    if(Array.isArray(rows) && rows.length > 0 && rows[0].value){
-      data = JSON.parse(rows[0].value);
-      setSyncBadge('ok');
-    } else {
-      // First time ever — nothing in the sheet yet, so create the row.
-      await fetch(SHEETDB_API, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ data: { id: RECORD_ID, value: JSON.stringify(data) } })
-      });
-      setSyncBadge('ok');
+    let tabs = await fetchAllTabs();
+    applyTabRows(tabs);
+
+    const alreadyMigrated = tabs.historyRows.some(r => r.id === MIGRATION_MARKER_ID);
+    const sheetsAreEmpty = data.people.length === 0 && data.topups.length === 0 && data.expenses.length === 0 &&
+                            data.recurring.length === 0 && data.loans.length === 0 && data.loanPayments.length === 0;
+
+    if(!alreadyMigrated){
+      setLoadingText('Checking for older data to bring across…');
+      const legacy = await fetchLegacyBlob();
+      if(legacy){
+        setLoadingText('Copying your older records into the new sheets — this can take a moment, please keep this tab open…');
+        // Pass in whatever is already in the new tabs (could be partial, from
+        // an earlier interrupted attempt) so already-migrated items are skipped.
+        const failures = await migrateLegacyToNewTabs(legacy, {
+          people: data.people, topups: data.topups, expenses: data.expenses,
+          recurring: data.recurring, loans: data.loans, loanPayments: data.loanPayments, history: data.history
+        });
+        if(failures.length === 0){
+          await sdbCreate(SHEETS.history, {
+            id: MIGRATION_MARKER_ID, actor: 'System', action: 'migrate', kind: 'system',
+            details: 'Legacy data migration completed', at: new Date().toISOString()
+          });
+        }
+        // Re-read everything so the page shows exactly what's actually saved now.
+        tabs = await fetchAllTabs();
+        applyTabRows(tabs);
+        setSyncBadge(failures.length === 0 ? 'ok' : 'err');
+        document.getElementById('loading').style.display='none';
+        document.getElementById('app').style.display='block';
+        render();
+        if(failures.length === 0){
+          await showModal({
+            title:'Old data migrated',
+            message:'Found your previous records and copied them into the new sheet tabs. Once you\'ve checked your Google Sheet and it looks right, the old data row is no longer needed.',
+            showInput:false, showCancel:false
+          });
+        } else {
+          await showModal({
+            title:`Migrated most records — ${failures.length} did not go through`,
+            message:'These items failed to copy over (likely a brief connection or rate-limit issue): ' +
+              failures.slice(0,8).join('; ') + (failures.length>8 ? ` … and ${failures.length-8} more` : '') +
+              '. Just reload the page — it will automatically retry only what\'s still missing, without duplicating anything that already copied.',
+            showInput:false, showCancel:false
+          });
+        }
+        return;
+      }
+      if(sheetsAreEmpty){
+        // Truly nothing anywhere — brand-new setup, seed default members.
+        data.people = ['Me', 'Family member'];
+        await runInBatches(data.people, p => sdbCreate(SHEETS.people, { name: p, pin_hash: '' }));
+      }
     }
+    setSyncBadge('ok');
   }catch(e){
     console.error('Load failed', e);
     setSyncBadge('err');
     await showModal({
       title:'Could not load shared data',
-      message:'Could not reach the Google Sheet (SheetDB). Check your internet connection and that the sheet still has an "id" and "value" column, then reload the page.',
+      message:'Could not reach the Google Sheet (SheetDB), or a tab name/header doesn\'t match what this page expects (People / Topups / Expenses / Recurring / Loans / LoanPayments / History). Check your connection and sheet setup, then reload.',
       showInput:false, showCancel:false
     });
   }
-  if(!Array.isArray(data.history)) data.history = []; // backward-compat with data saved before history tracking existed
-  if(!data.pins || typeof data.pins !== 'object') data.pins = {}; // backward-compat with data saved before PINs existed
-  if(!Array.isArray(data.loans)) data.loans = []; // backward-compat with data saved before loans existed
-  if(!Array.isArray(data.loanPayments)) data.loanPayments = []; // backward-compat with data saved before loans existed
-  if(!Array.isArray(data.recurring)) data.recurring = []; // backward-compat with data saved before fixed monthly expenses existed
   document.getElementById('loading').style.display='none';
   document.getElementById('app').style.display='block';
   render();
-}
-
-async function save(){
-  setSyncBadge('saving');
-  try{
-    const res = await fetch(`${SHEETDB_API}/id/${encodeURIComponent(RECORD_ID)}`, {
-      method: 'PATCH',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ data: { value: JSON.stringify(data) } })
-    });
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    setSyncBadge('ok');
-  }catch(e){
-    console.error('Save failed', e);
-    setSyncBadge('err');
-  }
 }
 
 function render(){
@@ -569,7 +861,6 @@ function renderIdentity(){
   const prev = currentUser;
   sel.innerHTML = '<option value="">Select your name…</option>' +
     data.people.map(p => `<option value="${p}">${p}</option>`).join('');
-  // Keep the current selection if that name still exists among members
   sel.value = data.people.includes(prev) ? prev : '';
   currentUser = sel.value;
   sel.classList.toggle('unset', !currentUser);
@@ -583,15 +874,24 @@ function renderPeople(){
     chip.className = 'chip';
     const input = document.createElement('input');
     input.value = p;
-    input.addEventListener('change', () => {
+    input.addEventListener('change', async () => {
       const newName = input.value.trim() || p;
-      if(newName !== p){
-        logAction('edit','member',`Renamed "${p}" to "${newName}"`);
-        if(data.pins && data.pins[p]){ data.pins[newName] = data.pins[p]; delete data.pins[p]; }
-        if(currentUser === p) currentUser = newName;
+      if(newName === p) return;
+      if(data.people.includes(newName)){
+        await showModal({ title:'Name already used', message:`"${newName}" is already a member. Pick a different name.`, showInput:false, showCancel:false });
+        input.value = p;
+        return;
       }
+      const entry = logAction('edit','member',`Renamed "${p}" to "${newName}"`);
+      const oldPinHash = data.pins[p];
+      if(oldPinHash){ data.pins[newName] = oldPinHash; delete data.pins[p]; }
+      if(currentUser === p) currentUser = newName;
       data.people[i] = newName;
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbUpdate(SHEETS.people, 'name', p, { name: newName, pin_hash: oldPinHash || '' });
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'rename member');
     });
     const del = document.createElement('button');
     del.textContent = '×';
@@ -599,11 +899,15 @@ function renderPeople(){
     del.addEventListener('click', async () => {
       if(data.people.length <= 1) return;
       if(!(await requireUser())) return;
-      logAction('delete','member',`Removed member "${p}"`);
+      const entry = logAction('delete','member',`Removed member "${p}"`);
       if(data.pins) delete data.pins[p];
       if(currentUser === p) currentUser = '';
       data.people.splice(i,1);
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbDelete(SHEETS.people, 'name', p);
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'delete member');
     });
     chip.appendChild(input);
     chip.appendChild(del);
@@ -637,9 +941,13 @@ function renderTopups(){
     b.addEventListener('click', async () => {
       if(!(await requireUser())) return;
       const t = data.topups.find(x => x.id === b.dataset.id);
-      if(t) logAction('delete','topup',`Deleted top-up of ${fmt(t.amount)} from ${t.person}${t.date ? ' dated '+t.date : ''}${t.note ? ' — "'+t.note+'"' : ''}`);
+      const entry = t ? logAction('delete','topup',`Deleted top-up of ${fmt(t.amount)} from ${t.person}${t.date ? ' dated '+t.date : ''}${t.note ? ' — "'+t.note+'"' : ''}`) : null;
       data.topups = data.topups.filter(t => t.id !== b.dataset.id);
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbDelete(SHEETS.topups, 'id', b.dataset.id);
+        if(entry) await sdbCreate(SHEETS.history, entry);
+      })(), 'delete topup');
     });
   });
 }
@@ -664,9 +972,13 @@ function renderExpenses(){
     b.addEventListener('click', async () => {
       if(!(await requireUser())) return;
       const e = data.expenses.find(x => x.id === b.dataset.id);
-      if(e) logAction('delete','expense',`Deleted expense of ${fmt(e.amount)}${e.date ? ' dated '+e.date : ''}${e.note ? ' — "'+e.note+'"' : ''}`);
+      const entry = e ? logAction('delete','expense',`Deleted expense of ${fmt(e.amount)}${e.date ? ' dated '+e.date : ''}${e.note ? ' — "'+e.note+'"' : ''}`) : null;
       data.expenses = data.expenses.filter(e => e.id !== b.dataset.id);
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbDelete(SHEETS.expenses, 'id', b.dataset.id);
+        if(entry) await sdbCreate(SHEETS.history, entry);
+      })(), 'delete expense');
     });
   });
 }
@@ -692,9 +1004,14 @@ function renderRecurring(){
     nameInput.placeholder = 'Name';
     nameInput.addEventListener('change', () => {
       const newName = nameInput.value.trim() || r.name;
-      if(newName !== r.name) logAction('edit','recurring',`Renamed fixed expense "${r.name}" to "${newName}"`);
+      if(newName === r.name) return;
+      const entry = logAction('edit','recurring',`Renamed fixed expense "${r.name}" to "${newName}"`);
       data.recurring[i].name = newName;
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbUpdate(SHEETS.recurring, 'id', r.id, { name: newName });
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'rename recurring');
     });
     const amtInput = document.createElement('input');
     amtInput.className = 'amtf';
@@ -704,20 +1021,27 @@ function renderRecurring(){
     amtInput.placeholder = 'Amount';
     amtInput.addEventListener('change', () => {
       const newAmt = parseFloat(amtInput.value);
-      if(!isNaN(newAmt) && newAmt !== r.amount){
-        logAction('edit','recurring',`Changed amount for "${r.name}" from ${fmt(r.amount)} to ${fmt(newAmt)}`);
-        data.recurring[i].amount = newAmt;
-        save(); render();
-      }
+      if(isNaN(newAmt) || newAmt === r.amount) return;
+      const entry = logAction('edit','recurring',`Changed amount for "${r.name}" from ${fmt(r.amount)} to ${fmt(newAmt)}`);
+      data.recurring[i].amount = newAmt;
+      render();
+      commit((async () => {
+        await sdbUpdate(SHEETS.recurring, 'id', r.id, { amount: newAmt });
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'update recurring amount');
     });
     const del = document.createElement('button');
     del.textContent = '×';
     del.title = 'Remove fixed expense';
     del.addEventListener('click', async () => {
       if(!(await requireUser())) return;
-      logAction('delete','recurring',`Removed fixed expense "${r.name}" (${fmt(r.amount)})`);
+      const entry = logAction('delete','recurring',`Removed fixed expense "${r.name}" (${fmt(r.amount)})`);
       data.recurring.splice(i,1);
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbDelete(SHEETS.recurring, 'id', r.id);
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'delete recurring');
     });
     chip.appendChild(nameInput);
     chip.appendChild(amtInput);
@@ -818,9 +1142,14 @@ function renderLoans(){
       if(isNaN(amount) || amount === 0) return;
       const now = new Date().toISOString();
       const loan = data.loans.find(l => l.id === loanId);
-      data.loanPayments.push({ id: uid(), loanId, amount, date, note, createdBy: currentUser, createdAt: now });
-      logAction('add','loanpayment',`Added repayment of ${fmt(amount)} for loan with ${loan ? loan.person : 'unknown'}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
-      save(); render();
+      const row = { id: uid(), loanId, amount, date, note, createdBy: currentUser, createdAt: now };
+      data.loanPayments.push(row);
+      const entry = logAction('add','loanpayment',`Added repayment of ${fmt(amount)} for loan with ${loan ? loan.person : 'unknown'}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+      render();
+      commit((async () => {
+        await sdbCreate(SHEETS.loanPayments, row);
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'add loan payment');
     });
   });
   list.querySelectorAll('button[data-kind=loanpayment]').forEach(b => {
@@ -828,9 +1157,13 @@ function renderLoans(){
       if(!(await requireUser())) return;
       const p = data.loanPayments.find(x => x.id === b.dataset.id);
       const loan = data.loans.find(l => l.id === b.dataset.loan);
-      if(p) logAction('delete','loanpayment',`Deleted repayment of ${fmt(p.amount)} for loan with ${loan ? loan.person : 'unknown'}${p.date ? ' dated '+p.date : ''}`);
+      const entry = p ? logAction('delete','loanpayment',`Deleted repayment of ${fmt(p.amount)} for loan with ${loan ? loan.person : 'unknown'}${p.date ? ' dated '+p.date : ''}`) : null;
       data.loanPayments = data.loanPayments.filter(x => x.id !== b.dataset.id);
-      save(); render();
+      render();
+      commit((async () => {
+        await sdbDelete(SHEETS.loanPayments, 'id', b.dataset.id);
+        if(entry) await sdbCreate(SHEETS.history, entry);
+      })(), 'delete loan payment');
     });
   });
   list.querySelectorAll('button[data-loan-del]').forEach(b => {
@@ -838,10 +1171,16 @@ function renderLoans(){
       if(!(await requireUser())) return;
       const loanId = b.dataset.loanDel;
       const loan = data.loans.find(l => l.id === loanId);
-      logAction('delete','loan',`Deleted loan with ${loan ? loan.person : 'unknown'}${loan ? ' (principal '+fmt(loan.principal)+')' : ''}`);
+      const entry = logAction('delete','loan',`Deleted loan with ${loan ? loan.person : 'unknown'}${loan ? ' (principal '+fmt(loan.principal)+')' : ''}`);
       data.loans = data.loans.filter(l => l.id !== loanId);
       data.loanPayments = data.loanPayments.filter(p => p.loanId !== loanId);
-      save(); render();
+      render();
+      commit((async () => {
+        // Deletes the loan row, then every payment row referencing it.
+        await sdbDelete(SHEETS.loans, 'id', loanId);
+        await sdbDelete(SHEETS.loanPayments, 'loanId', loanId);
+        await sdbCreate(SHEETS.history, entry);
+      })(), 'delete loan');
     });
   });
 }
@@ -1055,9 +1394,14 @@ document.getElementById('historyOverlay').addEventListener('click', (e) => {
 });
 
 document.getElementById('addPersonBtn').addEventListener('click', () => {
-  logAction('add','member','Added a new member ("New member")');
-  data.people.push('New member');
-  save(); render();
+  const name = uniqueMemberName('New member');
+  data.people.push(name);
+  const entry = logAction('add','member',`Added a new member ("${name}")`);
+  render();
+  commit((async () => {
+    await sdbCreate(SHEETS.people, { name, pin_hash: '' });
+    await sdbCreate(SHEETS.history, entry);
+  })(), 'add member');
 });
 
 document.getElementById('topupForm').addEventListener('submit', async (e) => {
@@ -1069,10 +1413,15 @@ document.getElementById('topupForm').addEventListener('submit', async (e) => {
   const note = document.getElementById('topupNote').value.trim();
   if(!person || isNaN(amount) || amount === 0) return;
   const now = new Date().toISOString();
-  data.topups.push({ id: uid(), person, amount, date, note, createdBy: currentUser, createdAt: now });
-  logAction('add','topup',`Added top-up of ${fmt(amount)} for ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
-  save(); render();
+  const row = { id: uid(), person, amount, date, note, createdBy: currentUser, createdAt: now };
+  data.topups.push(row);
+  const entry = logAction('add','topup',`Added top-up of ${fmt(amount)} for ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  render();
   e.target.reset();
+  commit((async () => {
+    await sdbCreate(SHEETS.topups, row);
+    await sdbCreate(SHEETS.history, entry);
+  })(), 'add topup');
 });
 
 document.getElementById('expenseForm').addEventListener('submit', async (e) => {
@@ -1083,16 +1432,26 @@ document.getElementById('expenseForm').addEventListener('submit', async (e) => {
   const note = document.getElementById('expenseNote').value.trim();
   if(isNaN(amount) || amount === 0) return;
   const now = new Date().toISOString();
-  data.expenses.push({ id: uid(), amount, date, note, createdBy: currentUser, createdAt: now });
-  logAction('add','expense',`Added expense of ${fmt(amount)}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
-  save(); render();
+  const row = { id: uid(), amount, date, note, createdBy: currentUser, createdAt: now };
+  data.expenses.push(row);
+  const entry = logAction('add','expense',`Added expense of ${fmt(amount)}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  render();
   e.target.reset();
+  commit((async () => {
+    await sdbCreate(SHEETS.expenses, row);
+    await sdbCreate(SHEETS.history, entry);
+  })(), 'add expense');
 });
 
 document.getElementById('addRecurringBtn').addEventListener('click', () => {
-  logAction('add','recurring','Added a new fixed expense ("New fixed expense")');
-  data.recurring.push({ id: uid(), name: 'New fixed expense', amount: 0, note: '', createdBy: currentUser, createdAt: new Date().toISOString() });
-  save(); render();
+  const row = { id: uid(), name: 'New fixed expense', amount: 0, note: '', createdBy: currentUser, createdAt: new Date().toISOString() };
+  data.recurring.push(row);
+  const entry = logAction('add','recurring','Added a new fixed expense ("New fixed expense")');
+  render();
+  commit((async () => {
+    await sdbCreate(SHEETS.recurring, row);
+    await sdbCreate(SHEETS.history, entry);
+  })(), 'add recurring');
 });
 
 document.getElementById('loanForm').addEventListener('submit', async (e) => {
@@ -1104,10 +1463,15 @@ document.getElementById('loanForm').addEventListener('submit', async (e) => {
   const note = document.getElementById('loanNote').value.trim();
   if(!person || isNaN(principal) || principal === 0) return;
   const now = new Date().toISOString();
-  data.loans.push({ id: uid(), person, principal, date, note, createdBy: currentUser, createdAt: now });
-  logAction('add','loan',`Added loan of ${fmt(principal)} with ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
-  save(); render();
+  const row = { id: uid(), person, principal, date, note, createdBy: currentUser, createdAt: now };
+  data.loans.push(row);
+  const entry = logAction('add','loan',`Added loan of ${fmt(principal)} with ${person}${date ? ' dated '+date : ''}${note ? ' — "'+note+'"' : ''}`);
+  render();
   e.target.reset();
+  commit((async () => {
+    await sdbCreate(SHEETS.loans, row);
+    await sdbCreate(SHEETS.history, entry);
+  })(), 'add loan');
 });
 
 load();
