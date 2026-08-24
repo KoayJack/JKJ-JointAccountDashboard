@@ -245,7 +245,15 @@
         </div>
       </div>
       <div class="chart-box" style="margin-top:20px;">
-        <div class="ctitle">Monthly top-ups / expenses trend</div>
+        <div class="ctitle" style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">
+          <span>Monthly top-ups / expenses trend</span>
+          <select id="trendRangeFilter" style="font-family:'Inter',sans-serif;font-size:11px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 6px;">
+            <option value="6">Last 6 months</option>
+            <option value="12" selected>Last 12 months</option>
+            <option value="24">Last 24 months</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
         <div style="position:relative;height:240px;">
           <canvas id="lineChart" role="img" aria-label="Line chart of monthly top-up and expense totals over time">Monthly top-ups vs expenses trend</canvas>
         </div>
@@ -274,7 +282,7 @@
       </div>
     </div>
 
-    <details class="section card">
+    <details class="section card" style="display:none;">
       <summary>Members</summary>
       <div class="people-row" id="peopleRow" style="margin-top:12px;"></div>
       <button class="add-person" id="addPersonBtn">+ Add member</button>
@@ -289,6 +297,10 @@
         <div class="field"><label>Note (optional)</label><input type="text" id="topupNote" placeholder="e.g. July top-up"></div>
         <button type="submit">Add entry</button>
       </form>
+      <div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;">
+        <label style="font-size:12px;color:var(--ink-soft);">Showing:</label>
+        <select id="topupMonthFilter" style="font-family:'Inter',sans-serif;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px;"></select>
+      </div>
       <table class="ledger">
         <thead><tr><th>Member</th><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
         <tbody id="topupBody"></tbody>
@@ -305,6 +317,10 @@
         <div class="field"><label>Note (optional)</label><input type="text" id="expenseNote" placeholder="e.g. July expense total"></div>
         <button type="submit">Add entry</button>
       </form>
+      <div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;">
+        <label style="font-size:12px;color:var(--ink-soft);">Showing:</label>
+        <select id="expenseMonthFilter" style="font-family:'Inter',sans-serif;font-size:12px;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 8px;"></select>
+      </div>
       <table class="ledger">
         <thead><tr><th>Date</th><th>Note</th><th style="text-align:right">Amount</th><th>Recorded by</th><th></th></tr></thead>
         <tbody id="expenseBody"></tbody>
@@ -407,6 +423,27 @@ function fmtWhen(iso){
   if(isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US',{month:'short',day:'numeric'}) + ' ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
+
+// ---- Month filtering (Top-ups / Expenses tables default to current month) ----
+function currentMonthStr(){
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+}
+function monthLabel(m){
+  if(m === 'all') return 'All time';
+  const [y, mo] = m.split('-');
+  return new Date(Number(y), Number(mo)-1, 1).toLocaleDateString('en-US', { month:'short', year:'numeric' });
+}
+// Builds the list of months to offer in a filter dropdown: every month that
+// actually has records, plus the current month even if it has none yet.
+function monthOptionsFor(items){
+  const months = new Set(items.filter(x => x.date).map(x => x.date.slice(0,7)));
+  months.add(currentMonthStr());
+  return [...months].sort().reverse();
+}
+let topupMonthFilter = currentMonthStr();
+let expenseMonthFilter = currentMonthStr();
+let trendRangeMonths = 12; // number of months, or 'all'
 
 function setSyncBadge(state){
   const el = document.getElementById('syncBadge');
@@ -851,6 +888,7 @@ function render(){
   renderLoans();
   renderSummary();
   renderCharts();
+  renderTrendChart();
   renderLoanOverview();
   renderRecurringOverview();
   renderHistory();
@@ -899,6 +937,12 @@ function renderPeople(){
     del.addEventListener('click', async () => {
       if(data.people.length <= 1) return;
       if(!(await requireUser())) return;
+      const confirmed = await showModal({
+        title: `Remove "${p}"?`,
+        message: 'This removes them from the member list. Top-ups already recorded under their name stay in the ledger as-is. This cannot be undone from here.',
+        showInput:false, showCancel:true, okLabel:'Remove', cancelLabel:'Cancel'
+      });
+      if(!confirmed) return;
       const entry = logAction('delete','member',`Removed member "${p}"`);
       if(data.pins) delete data.pins[p];
       if(currentUser === p) currentUser = '';
@@ -921,13 +965,20 @@ function renderTopupSelect(){
 }
 
 function renderTopups(){
-  const body = document.getElementById('topupBody');
+  const months = monthOptionsFor(data.topups);
+  const sel = document.getElementById('topupMonthFilter');
+  if(!months.includes(topupMonthFilter) && topupMonthFilter !== 'all') topupMonthFilter = currentMonthStr();
+  sel.innerHTML = months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('') + '<option value="all">All time</option>';
+  sel.value = topupMonthFilter;
+
   document.getElementById('topupCount').textContent = data.topups.length;
-  if(data.topups.length === 0){
-    body.innerHTML = '<tr class="empty-row"><td colspan="6">No top-ups recorded yet</td></tr>';
+  const body = document.getElementById('topupBody');
+  const filtered = topupMonthFilter === 'all' ? data.topups : data.topups.filter(t => t.date && t.date.slice(0,7) === topupMonthFilter);
+  if(filtered.length === 0){
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">No top-ups recorded for ${topupMonthFilter === 'all' ? 'any period' : monthLabel(topupMonthFilter)}</td></tr>`;
     return;
   }
-  const rows = [...data.topups].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const rows = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   body.innerHTML = rows.map(t => `
     <tr>
       <td class="name">${t.person}</td>
@@ -953,13 +1004,20 @@ function renderTopups(){
 }
 
 function renderExpenses(){
-  const body = document.getElementById('expenseBody');
+  const months = monthOptionsFor(data.expenses);
+  const sel = document.getElementById('expenseMonthFilter');
+  if(!months.includes(expenseMonthFilter) && expenseMonthFilter !== 'all') expenseMonthFilter = currentMonthStr();
+  sel.innerHTML = months.map(m => `<option value="${m}">${monthLabel(m)}</option>`).join('') + '<option value="all">All time</option>';
+  sel.value = expenseMonthFilter;
+
   document.getElementById('expenseCount').textContent = data.expenses.length;
-  if(data.expenses.length === 0){
-    body.innerHTML = '<tr class="empty-row"><td colspan="5">No expenses recorded yet</td></tr>';
+  const body = document.getElementById('expenseBody');
+  const filtered = expenseMonthFilter === 'all' ? data.expenses : data.expenses.filter(e => e.date && e.date.slice(0,7) === expenseMonthFilter);
+  if(filtered.length === 0){
+    body.innerHTML = `<tr class="empty-row"><td colspan="5">No expenses recorded for ${expenseMonthFilter === 'all' ? 'any period' : monthLabel(expenseMonthFilter)}</td></tr>`;
     return;
   }
-  const rows = [...data.expenses].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  const rows = [...filtered].sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   body.innerHTML = rows.map(e => `
     <tr>
       <td>${e.date || '—'}</td>
@@ -1248,18 +1306,29 @@ function renderCharts(){
       plugins:{ legend:{ position:'top', labels:{ boxWidth:10, font:{size:11} } } },
       scales:{ y:{ beginAtZero:true } } }
   });
+}
+
+// Monthly trend chart, kept separate from renderCharts() so the range filter
+// (Last 6/12/24 months / All time) can re-render just this chart without
+// touching the pie/bar charts above.
+function renderTrendChart(){
+  const sel = document.getElementById('trendRangeFilter');
+  if(sel) sel.value = String(trendRangeMonths);
 
   const monthMap = {};
   data.topups.forEach(t => { if(!t.date) return; const m=t.date.slice(0,7); monthMap[m]=monthMap[m]||{topup:0,expense:0}; monthMap[m].topup+=t.amount; });
   data.expenses.forEach(e => { if(!e.date) return; const m=e.date.slice(0,7); monthMap[m]=monthMap[m]||{topup:0,expense:0}; monthMap[m].expense+=e.amount; });
-  const months = Object.keys(monthMap).sort();
+  let months = Object.keys(monthMap).sort();
+  if(trendRangeMonths !== 'all'){
+    months = months.slice(-trendRangeMonths);
+  }
 
   if(lineChart) lineChart.destroy();
   lineChart = new Chart(document.getElementById('lineChart'), {
     type:'line',
     data:{ labels: months, datasets:[
-      { label:'Top-ups', data: months.map(m=>Math.round(monthMap[m].topup*100)/100), borderColor:'#4F7A5B', backgroundColor:'rgba(79,122,91,0.1)', fill:true, tension:0.25 },
-      { label:'Expenses', data: months.map(m=>Math.round(monthMap[m].expense*100)/100), borderColor:'#B5502F', backgroundColor:'rgba(181,80,47,0.1)', fill:true, tension:0.25 }
+      { label:'Top-ups', data: months.map(m=>Math.round((monthMap[m]?monthMap[m].topup:0)*100)/100), borderColor:'#4F7A5B', backgroundColor:'rgba(79,122,91,0.1)', fill:true, tension:0.25 },
+      { label:'Expenses', data: months.map(m=>Math.round((monthMap[m]?monthMap[m].expense:0)*100)/100), borderColor:'#B5502F', backgroundColor:'rgba(181,80,47,0.1)', fill:true, tension:0.25 }
     ]},
     options:{ responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ position:'top', labels:{ boxWidth:10, font:{size:11} } } },
@@ -1391,6 +1460,19 @@ document.getElementById('closeHistory').addEventListener('click', () => {
 });
 document.getElementById('historyOverlay').addEventListener('click', (e) => {
   if(e.target.id === 'historyOverlay') e.target.classList.remove('open');
+});
+
+document.getElementById('topupMonthFilter').addEventListener('change', (e) => {
+  topupMonthFilter = e.target.value;
+  renderTopups();
+});
+document.getElementById('expenseMonthFilter').addEventListener('change', (e) => {
+  expenseMonthFilter = e.target.value;
+  renderExpenses();
+});
+document.getElementById('trendRangeFilter').addEventListener('change', (e) => {
+  trendRangeMonths = e.target.value === 'all' ? 'all' : parseInt(e.target.value, 10);
+  renderTrendChart();
 });
 
 document.getElementById('addPersonBtn').addEventListener('click', () => {
